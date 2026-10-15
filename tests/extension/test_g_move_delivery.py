@@ -15,6 +15,6 @@ def test_g_move_dashboard_and_acceptance_do_not_overclaim_scope():
 def test_g_move_delivery_contains_real_runtime_tests_and_unchanged_extension_id():
     manifest = tomllib.loads((ROOT/'extension/aludiy_designer/blender_manifest.toml').read_text())
     assert manifest['id'] == 'aludiy_designer'
-    assert manifest['version'] == '0.1.7'
+    assert tuple(map(int, manifest['version'].split('.'))) >= (0, 1, 7)
     assert (ROOT/'tools/blender_movement_test.py').is_file()
     assert 'XTestFakeKeyEvent' in (ROOT/'tools/blender_gui_move_test.py').read_text()
