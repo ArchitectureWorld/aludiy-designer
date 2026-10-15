@@ -4,6 +4,16 @@ All notable AluDIY Designer changes are recorded here. The project is in alpha; 
 
 ## Unreleased
 
+- v0.1.9 planned: shared engineering snapping for drawing and G movement; distinguish location from connection.
+
+## 0.1.8-alpha
+
+- Fix destructive sample generation: append a four-member XY frame at the 3D cursor instead of replacing the current project.
+- Preserve existing project metadata, IDs, coordinates, member parameters and shared-node topology; allocate new IDs without auto-welding coincident nodes.
+- Reuse transactional cache regeneration and rollback; add explicit confirmation before resetting non-empty engineering projects.
+- Add sample preservation, repeat insertion, invalid input, failure rollback and real Blender undo/confirmation/reopen regressions.
+- Record G movement and JSON exchange as user simple-scenario acceptance, not comprehensive acceptance; update the visual roadmap.
+
 ## 0.1.7-alpha
 
 - Add scoped engineering G movement, screen-space endpoint handles and explicit KEEP/DETACH modes.
@@ -11,9 +21,6 @@ All notable AluDIY Designer changes are recorded here. The project is in alpha; 
 - Preview without persisting data, cancel without split nodes, commit with one-step Undo/Redo.
 - Add actual Blender 5.2.2 background and X11/XTest GUI regressions.
 - Fix multi-selection synchronization, freshly rebuilt object selection and invalid panel icons.
-
-
-- Continue toward complete engineering snapping and persistent constraints.
 
 ## 0.1.6-alpha
 
