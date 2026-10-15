@@ -1,0 +1,40 @@
+name: G Move Runtime Verification
+on:
+  push:
+    branches: ["feat/v0.1.7-g-endpoint-move"]
+    paths: [".github/workflows/g-move-runtime.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Prepare source and official runtime
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          git archive HEAD | xz > evidence/source.tar.xz
+          B=blender-5.2.2-linux-x64.tar.xz
+          curl -fL --retry 3 https://download.blender.org/release/Blender5.2/$B -o evidence/$B
+          curl -fL --retry 3 https://download.blender.org/release/Blender5.2/blender-5.2.2.sha256 -o evidence/official.sha256
+          (cd evidence; grep -F "$B" official.sha256 | sha256sum --check)
+          tar -xf evidence/$B -C "$RUNNER_TEMP"
+          python tools/sync_core_into_extension.py
+      - name: Baseline Blender smoke
+        continue-on-error: true
+        run: |
+          set -o pipefail
+          "$RUNNER_TEMP/blender-5.2.2-linux-x64/blender" --background --factory-startup --python-exit-code 1 --python tools/blender_smoke_test.py 2>&1 | tee evidence/baseline-smoke.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aludiy-runtime-baseline
+          path: evidence/
+          compression-level: 0
+          retention-days: 3
