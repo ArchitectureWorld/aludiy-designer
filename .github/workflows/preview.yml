@@ -1,0 +1,196 @@
+name: Publish Preview Repository
+
+on:
+  push:
+    branches: [main]
+    paths: [".github/workflows/preview.yml"]
+  workflow_dispatch:
+    inputs:
+      source_sha:
+        description: "Full commit SHA to publish for Blender experience testing"
+        required: false
+        default: "cf49446a776680fcda4ee8e5b570f247e819a80b"
+
+# Preview is a test channel. Publishing it does not merge the feature PR.
+permissions:
+  contents: read
+concurrency:
+  group: pages
+  cancel-in-progress: false
+env:
+  BLENDER_VERSION: "5.2.2"
+  PREVIEW_SOURCE_SHA: "cf49446a776680fcda4ee8e5b570f247e819a80b"
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pages: read
+    outputs:
+      version: ${{ steps.meta.outputs.version }}
+      package_sha: ${{ steps.meta.outputs.package_sha }}
+    steps:
+      - name: Check out the selected preview source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_sha || env.PREVIEW_SOURCE_SHA }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Confirm immutable source selection
+        env:
+          REQUESTED_SHA: ${{ inputs.source_sha || env.PREVIEW_SOURCE_SHA }}
+        run: |
+          set -euo pipefail
+          [[ "$REQUESTED_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$REQUESTED_SHA"
+          echo "Preview source: $REQUESTED_SHA"
+
+      - name: Prepare resources and run the source test suite
+        run: |
+          set -euo pipefail
+          python -m pip install pytest
+          python tools/sync_core_into_extension.py
+          pytest -q
+          python -m compileall -q src extension tools
+
+      - name: Build a reproducible extension and static site
+        id: meta
+        run: |
+          set -euo pipefail
+          python tools/build_extension.py
+          PACKAGE="$(python tools/release_meta.py package-name)"
+          cp "dist/$PACKAGE" "$RUNNER_TEMP/first.zip"
+          python tools/build_extension.py
+          cmp "$RUNNER_TEMP/first.zip" "dist/$PACKAGE"
+          echo "version=$(python tools/release_meta.py version)" >> "$GITHUB_OUTPUT"
+          echo "package_sha=$(sha256sum "dist/$PACKAGE" | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+          python tools/build_pages_site.py --package "dist/$PACKAGE" --output site
+
+      - name: Download and verify the official Blender CLI
+        run: |
+          set -euo pipefail
+          ARCHIVE="blender-${BLENDER_VERSION}-linux-x64.tar.xz"
+          BASE="https://download.blender.org/release/Blender5.2"
+          curl -fL --retry 3 "$BASE/$ARCHIVE" -o "$RUNNER_TEMP/$ARCHIVE"
+          curl -fL --retry 3 "$BASE/blender-${BLENDER_VERSION}.sha256" -o "$RUNNER_TEMP/blender.sha256"
+          (cd "$RUNNER_TEMP"; grep -F "$ARCHIVE" blender.sha256 | sha256sum --check)
+          tar -xf "$RUNNER_TEMP/$ARCHIVE" -C "$RUNNER_TEMP"
+          "$RUNNER_TEMP/blender-${BLENDER_VERSION}-linux-x64/blender" --version
+
+      - name: Validate extension and generate the official repository index
+        run: |
+          set -euo pipefail
+          BLENDER="$RUNNER_TEMP/blender-${BLENDER_VERSION}-linux-x64/blender"
+          PACKAGE="$(python tools/release_meta.py package-name)"
+          "$BLENDER" --command extension validate "dist/$PACKAGE"
+          "$BLENDER" --command extension server-generate --repo-dir="$GITHUB_WORKSPACE/site" --html
+          python - <<'PY'
+          import hashlib, json, pathlib, subprocess, tomllib
+          from urllib.parse import urlparse
+          site = pathlib.Path('site')
+          index = json.loads((site / 'index.json').read_text())
+          entries = [p for p in index['data'] if p['id'] == 'aludiy_designer']
+          assert len(entries) == 1, 'Missing or duplicate AluDIY package'
+          entry = entries[0]
+          uri = urlparse(entry['archive_url'])
+          assert not uri.scheme and not uri.netloc, 'Expected a same-site package'
+          package = (site / uri.path.removeprefix('./')).resolve()
+          assert package.is_relative_to(site.resolve()), 'Package path escapes site'
+          payload = package.read_bytes()
+          assert len(payload) == entry['archive_size']
+          assert entry['archive_hash'] == 'sha256:' + hashlib.sha256(payload).hexdigest()
+          with open('extension/aludiy_designer/blender_manifest.toml', 'rb') as f:
+              manifest = tomllib.load(f)
+          assert entry['version'] == manifest['version']
+          (site / 'preview.json').write_text(json.dumps({
+              'channel': 'preview', 'version': entry['version'],
+              'source_sha': subprocess.check_output(['git', 'rev-parse', 'HEAD'], text=True).strip(),
+              'archive_hash': entry['archive_hash'], 'gui_acceptance': 'pending'
+          }, indent=2) + '\n')
+          print('REPOSITORY_VALID', entry['id'], entry['version'], entry['archive_hash'])
+          PY
+
+      - name: Configure GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: Upload the tested repository site
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: site
+
+      - name: Retain package and index evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: aludiy-preview-${{ github.run_id }}
+          path: |
+            site/index.json
+            site/preview.json
+            site/*.zip
+            site/SHA256SUMS.txt
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy Preview without a release tag
+        id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Verify the public index and downloadable ZIP
+        env:
+          SITE_URL: ${{ steps.deployment.outputs.page_url }}
+          EXPECTED_VERSION: ${{ needs.build.outputs.version }}
+          EXPECTED_SHA: ${{ needs.build.outputs.package_sha }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, io, json, os, time, zipfile
+          from urllib.request import Request, urlopen
+          from urllib.parse import urljoin
+          index_url = urljoin(os.environ['SITE_URL'].rstrip('/') + '/', 'index.json')
+          last_error = None
+          for attempt in range(18):
+              try:
+                  request = Request(index_url, headers={'Cache-Control': 'no-cache'})
+                  with urlopen(request, timeout=30) as response:
+                      assert response.status == 200
+                      index = json.load(response)
+                  packages = [p for p in index['data'] if p['id'] == 'aludiy_designer']
+                  assert len(packages) == 1
+                  package = packages[0]
+                  assert package['version'] == os.environ['EXPECTED_VERSION'], 'Stale index'
+                  with urlopen(urljoin(index_url, package['archive_url']), timeout=30) as response:
+                      assert response.status == 200
+                      payload = response.read()
+                  digest = hashlib.sha256(payload).hexdigest()
+                  assert digest == os.environ['EXPECTED_SHA'], 'ZIP differs from tested build'
+                  assert package['archive_hash'] == 'sha256:' + digest
+                  assert len(payload) == package['archive_size']
+                  with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+                      assert archive.testzip() is None
+                      assert 'blender_manifest.toml' in archive.namelist()
+                  result = f"PUBLIC_PREVIEW_OK index={index_url} version={package['version']} bytes={len(payload)} sha256={digest}"
+                  print(result)
+                  with open(os.environ['GITHUB_STEP_SUMMARY'], 'a') as summary:
+                      summary.write('## Preview is live\n\n' + result + '\n\nGUI acceptance remains pending.\n')
+                  break
+              except Exception as exc:
+                  last_error = exc
+                  print(f'Public verification attempt {attempt + 1}/18: {exc}', flush=True)
+                  time.sleep(10)
+          else:
+              raise SystemExit(f'Public Preview verification failed: {last_error}')
+          PY
