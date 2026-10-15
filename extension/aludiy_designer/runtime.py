@@ -13,7 +13,7 @@ from .vendor.aludiy_core import ProfileCatalog, Project
 
 CATALOG_REVISION = "alpha-2026.10"
 PROJECT_SCHEMA_VERSION = "0.1.0"
-EXTENSION_VERSION = "0.1.6-alpha"
+EXTENSION_VERSION = "0.1.7-alpha"
 WORKSPACE_NAME = "ALU DIY"
 AXIS_COLLECTION = "ALUDIY_AXES"
 SOLID_COLLECTION = "ALUDIY_SOLIDS"
@@ -66,6 +66,14 @@ def _solid_display_mode_updated(_self: Any, context: bpy.types.Context | None) -
 
 
 class AluDIYSceneSettings(bpy.types.PropertyGroup):
+    endpoint_member_id: bpy.props.StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
+    endpoint_side: bpy.props.StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
+    move_connection_mode: bpy.props.EnumProperty(
+        name="本次端点移动",
+        items=(("KEEP", "保持连接", "共享节点驱动所有相连杆件"),
+               ("DETACH", "断开此杆端", "只让选定型材端点离开公共连接点")),
+        default="KEEP", options={"SKIP_SAVE"},
+    )
     project_json: bpy.props.StringProperty(
         name="Project JSON",
         default="",

@@ -4,6 +4,15 @@ All notable AluDIY Designer changes are recorded here. The project is in alpha; 
 
 ## Unreleased
 
+## 0.1.7-alpha
+
+- Add scoped engineering G movement, screen-space endpoint handles and explicit KEEP/DETACH modes.
+- Deduplicate shared nodes during group movement; preserve ordinary Blender G and native deletion shortcuts.
+- Preview without persisting data, cancel without split nodes, commit with one-step Undo/Redo.
+- Add actual Blender 5.2.2 background and X11/XTest GUI regressions.
+- Fix multi-selection synchronization, freshly rebuilt object selection and invalid panel icons.
+
+
 - Continue toward complete engineering snapping and persistent constraints.
 
 ## 0.1.6-alpha

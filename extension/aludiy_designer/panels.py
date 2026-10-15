@@ -4,7 +4,7 @@ import json
 
 import bpy
 
-from . import view_sync
+from . import view_sync, g_move
 from .runtime import (
     EXTENSION_VERSION,
     active_member_id,
@@ -43,6 +43,35 @@ class ALUDIY_PT_main(bpy.types.Panel):
         row.operator("aludiy.new_project", icon="FILE_NEW")
         box.prop(scene_settings, "view_sync_mode")
         box.prop(scene_settings, "solid_display_mode")
+
+        box = layout.box()
+        box.label(text="移动与端点", icon="EMPTY_ARROWS")
+        ep = g_move.endpoint_context(context)
+        owner = g_move._handle_owner(context)
+        if ep:
+            project = get_project(context.scene)
+            member = project.members[ep[0]]
+            nid = member.start_node_id if ep[1] == "START" else member.end_node_id
+            count = sum(nid in (m.start_node_id, m.end_node_id) for m in project.members.values())
+            box.label(text=f"{ep[0]} · {'起端' if ep[1] == 'START' else '终端'} · 关联 {count} 根")
+            box.prop(scene_settings, "move_connection_mode", expand=True)
+            if scene_settings.move_connection_mode == "DETACH":
+                box.label(text="仅断开这根型材的这一端", icon="UNLINKED")
+        elif owner:
+            box.label(text=f"{owner} · 整根移动 / 点击下方端点")
+        elif active_node_id(context):
+            box.label(text="公共节点 · 保持连接移动")
+        else:
+            box.label(text="选型材→点端部圆点→G；多选可成组移动")
+        row = box.row(align=True)
+        row.enabled = bool(owner)
+        op = row.operator("aludiy.select_endpoint", text="起端（绿）")
+        op.endpoint = "START"
+        op = row.operator("aludiy.select_endpoint", text="终端（红）")
+        op.endpoint = "END"
+        box.operator("aludiy.move_engineering", text="G · 鼠标移动", icon="EMPTY_ARROWS")
+        box.operator("aludiy.translate_active_member", text="整根精确平移 ΔXYZ")
+        box.label(text="输入默认 mm；X/Y/Z 锁轴；Esc 取消")
 
         box = layout.box()
         box.label(text="精确空间线驱动", icon="IPO_LINEAR")
@@ -142,7 +171,7 @@ class ALUDIY_PT_selection(bpy.types.Panel):
         )
         op = points.operator("aludiy.edit_member_endpoint", text="编辑终点", icon="TRIA_RIGHT")
         op.endpoint = "END"
-        points.operator("aludiy.translate_active_member", text="精确平移", icon="TRANSFORM_MOVE")
+        points.operator("aludiy.translate_active_member", text="精确平移", icon="EMPTY_ARROWS")
 
         layout.label(text=f"型材：{profile.display_name}")
         layout.label(text=f"截面：{profile.section.width_mm:g} × {profile.section.height_mm:g} mm")
