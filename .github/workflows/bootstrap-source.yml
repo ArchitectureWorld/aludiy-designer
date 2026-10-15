@@ -1,0 +1,41 @@
+name: Bootstrap Source Import
+
+on:
+  push:
+    paths:
+      - ".github/workflows/bootstrap-source.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  import:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Reconstruct source archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat bootstrap/source.b64.* | base64 --decode > /tmp/aludiy-source.tar.xz
+          echo "7348a2665b764f3592800655bad5a9f340b77660a2e90a43191b249f7f0d6966  /tmp/aludiy-source.tar.xz" | sha256sum --check
+          mkdir -p /tmp/aludiy-source
+          tar -xJf /tmp/aludiy-source.tar.xz -C /tmp/aludiy-source
+
+      - name: Import source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          rsync -a --exclude=".github/workflows/" /tmp/aludiy-source/ ./
+          rm -rf bootstrap
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "No source changes to import."
+            exit 0
+          fi
+          git commit -m "chore: import AluDIY source tree"
+          git push origin HEAD:main
