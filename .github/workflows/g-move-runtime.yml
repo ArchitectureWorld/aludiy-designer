@@ -2,7 +2,7 @@ name: G Move Runtime Verification
 on:
   push:
     branches: ["feat/v0.1.7-g-endpoint-move"]
-    paths: [".github/workflows/g-move-runtime.yml"]
+    paths: [".github/workflows/g-move-runtime.yml", "src/**", "extension/**", "tools/**", "tests/**"]
   workflow_dispatch:
 permissions:
   contents: read
@@ -15,26 +15,46 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Prepare source and official runtime
+      - name: Prepare source and verified official runtime
         run: |
           set -euo pipefail
           mkdir -p evidence
-          git archive HEAD | xz > evidence/source.tar.xz
           B=blender-5.2.2-linux-x64.tar.xz
-          curl -fL --retry 3 https://download.blender.org/release/Blender5.2/$B -o evidence/$B
-          curl -fL --retry 3 https://download.blender.org/release/Blender5.2/blender-5.2.2.sha256 -o evidence/official.sha256
-          (cd evidence; grep -F "$B" official.sha256 | sha256sum --check)
-          tar -xf evidence/$B -C "$RUNNER_TEMP"
+          curl -fL --retry 3 https://download.blender.org/release/Blender5.2/$B -o "$RUNNER_TEMP/$B"
+          curl -fL --retry 3 https://download.blender.org/release/Blender5.2/blender-5.2.2.sha256 -o "$RUNNER_TEMP/official.sha256"
+          (cd "$RUNNER_TEMP"; grep -F "$B" official.sha256 | sha256sum --check)
+          tar -xf "$RUNNER_TEMP/$B" -C "$RUNNER_TEMP"
+          python -m pip install pytest
           python tools/sync_core_into_extension.py
-      - name: Baseline Blender smoke
-        continue-on-error: true
+          pytest -q | tee evidence/pytest.log
+      - name: Real Blender background and UI-icon regressions
         run: |
-          set -o pipefail
-          "$RUNNER_TEMP/blender-5.2.2-linux-x64/blender" --background --factory-startup --python-exit-code 1 --python tools/blender_smoke_test.py 2>&1 | tee evidence/baseline-smoke.log
-      - uses: actions/upload-artifact@v4
+          set -euo pipefail
+          B="$RUNNER_TEMP/blender-5.2.2-linux-x64/blender"
+          "$B" -b --factory-startup --python-exit-code 1 --python tools/blender_smoke_test.py | tee evidence/smoke.log
+          "$B" -b --factory-startup --python-exit-code 1 --python tools/blender_movement_test.py | tee evidence/movement.log
+      - name: Install isolated X11 test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb xauth libxtst6 ffmpeg
+      - name: Real window key, mouse, undo and reopen regression
+        env:
+          BLENDER_USER_CONFIG: ${{ runner.temp }}/aludiy-gui-config
+          ALUDIY_EVIDENCE_DIR: ${{ github.workspace }}/evidence/gui
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set -euo pipefail
+          B="$RUNNER_TEMP/blender-5.2.2-linux-x64/blender"
+          mkdir -p "$BLENDER_USER_CONFIG"
+          "$B" -b --factory-startup --python-expr 'import bpy; bpy.context.preferences.view.show_splash=False; bpy.ops.wm.save_userpref()'
+          timeout 150s xvfb-run -a -s '-screen 0 1800x1100x24' "$B" --gpu-backend opengl -t 2 -p 0 0 1680 1000 --python tools/blender_gui_move_test.py > evidence/gui.log 2>&1
+          python -c 'import json; r=json.load(open("evidence/gui/report.json")); assert r["status"]=="passed"; print("GUI checks:",len(r["checks"]))'
+          if grep -E 'Traceback|Python script error|AluDIY endpoint overlay:' evidence/gui.log; then exit 1; fi
+          "$B" -b evidence/gui/endpoint-demo.blend --python-exit-code 1 --python tools/blender_reopen_move_test.py | tee evidence/reopen.log
+      - name: Retain verification evidence
+        uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: aludiy-runtime-baseline
+          name: aludiy-g-move-evidence
           path: evidence/
-          compression-level: 0
-          retention-days: 3
+          retention-days: 14
