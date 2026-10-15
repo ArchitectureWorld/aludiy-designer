@@ -13,7 +13,14 @@ from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 
 from . import view_sync
-from .runtime import WORKSPACE_NAME, active_member_id, get_project, settings
+from .runtime import (
+    WORKSPACE_NAME,
+    active_member_id,
+    active_node_id,
+    get_project,
+    settings,
+)
+from .vendor.aludiy_core import member_length_mm
 from .vendor.aludiy_core.drawing import axis_vector, workplane_angle_deg
 
 MM_TO_M = 0.001
@@ -23,6 +30,7 @@ END_COLOR = (1.00, 0.16, 0.14, 1.0)
 CURSOR_COLOR = (0.15, 0.82, 1.00, 1.0)
 SNAP_COLOR = (1.00, 0.72, 0.12, 1.0)
 GUIDE_COLOR = (0.48, 0.68, 0.82, 0.42)
+DIMENSION_COLOR = (0.20, 0.82, 1.00, 0.95)
 TEXT_COLOR = (0.94, 0.97, 1.00, 1.0)
 PANEL_COLOR = (0.035, 0.055, 0.075, 0.90)
 AXIS_COLORS = {
@@ -212,6 +220,95 @@ def format_measurement_label(
     )
 
 
+def dimension_geometry_2d(
+    start: tuple[float, float],
+    end: tuple[float, float],
+    *,
+    offset_px: float = 28.0,
+):
+    dx = end[0] - start[0]
+    dy = end[1] - start[1]
+    screen_length = math.hypot(dx, dy)
+    if screen_length <= 1.0:
+        return None
+    tangent = (dx / screen_length, dy / screen_length)
+    normal = (-tangent[1], tangent[0])
+    witness_start = (
+        start[0] + normal[0] * offset_px,
+        start[1] + normal[1] * offset_px,
+    )
+    witness_end = (
+        end[0] + normal[0] * offset_px,
+        end[1] + normal[1] * offset_px,
+    )
+    label = (
+        (witness_start[0] + witness_end[0]) * 0.5 + normal[0] * 7.0,
+        (witness_start[1] + witness_end[1]) * 0.5 + normal[1] * 7.0,
+    )
+    return {
+        "witness_start": witness_start,
+        "witness_end": witness_end,
+        "label": label,
+        "tangent": tangent,
+        "normal": normal,
+    }
+
+
+def _draw_member_reference_dimension(project, member_id: str) -> None:
+    member = project.members.get(member_id)
+    if member is None:
+        return
+    start = _project(project.nodes[member.start_node_id].position_mm)
+    end = _project(project.nodes[member.end_node_id].position_mm)
+    if start is None or end is None:
+        return
+    start_2d = (start.x, start.y)
+    end_2d = (end.x, end.y)
+    geometry = dimension_geometry_2d(start_2d, end_2d)
+    if geometry is None:
+        return
+    witness_start = geometry["witness_start"]
+    witness_end = geometry["witness_end"]
+    tangent = geometry["tangent"]
+    _polyline([start_2d, witness_start], color=DIMENSION_COLOR, width=1.2)
+    _polyline([end_2d, witness_end], color=DIMENSION_COLOR, width=1.2)
+    _polyline([witness_start, witness_end], color=DIMENSION_COLOR, width=1.8)
+    tick = 5.0
+    for point in (witness_start, witness_end):
+        a = (point[0] - tangent[0] * tick, point[1] - tangent[1] * tick)
+        b = (point[0] + tangent[0] * tick, point[1] + tangent[1] * tick)
+        _polyline([a, b], color=DIMENSION_COLOR, width=1.8)
+    label = geometry["label"]
+    _text(
+        label[0],
+        label[1],
+        f"参考尺寸  {member_length_mm(project, member_id):.1f} mm",
+        size=12.5,
+        color=DIMENSION_COLOR,
+    )
+
+
+def _draw_node_coordinate_reference(project, node_id: str) -> None:
+    node = project.nodes.get(node_id)
+    if node is None:
+        return
+    point = _project(node.position_mm)
+    if point is None:
+        return
+    point_2d = (point.x, point.y)
+    _points([point_2d], [DIMENSION_COLOR], size=13.0)
+    _draw_dimension_panel(
+        point_2d,
+        [
+            f"节点坐标  {node.id}",
+            (
+                f"X {node.position_mm[0]:.1f}  Y {node.position_mm[1]:.1f}  "
+                f"Z {node.position_mm[2]:.1f} mm"
+            ),
+        ],
+    )
+
+
 def _draw_direction_overlay() -> None:
     context = bpy.context
     if (
@@ -228,6 +325,7 @@ def _draw_direction_overlay() -> None:
             return
         project = get_project(context.scene)
         selected_id = active_member_id(context)
+        selected_node_id = active_node_id(context)
         gpu.state.blend_set("ALPHA")
         for member_id in sorted(project.members):
             member = project.members[member_id]
@@ -247,6 +345,10 @@ def _draw_direction_overlay() -> None:
                 [START_COLOR, END_COLOR],
                 size=point_size,
             )
+        if selected_id:
+            _draw_member_reference_dimension(project, selected_id)
+        elif selected_node_id:
+            _draw_node_coordinate_reference(project, selected_node_id)
     except Exception as exc:
         print(f"AluDIY direction overlay warning: {exc}")
     finally:

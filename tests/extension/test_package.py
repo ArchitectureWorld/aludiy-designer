@@ -10,7 +10,6 @@ import pytest
 
 from tools.release_meta import extension_package_name
 
-
 ROOT = Path(__file__).parents[2]
 MANIFEST = ROOT / "extension" / "aludiy_designer" / "blender_manifest.toml"
 PACKAGE = ROOT / "dist" / extension_package_name(MANIFEST)
@@ -37,7 +36,7 @@ def test_extension_zip_has_blender_root_layout_and_runtime_resources() -> None:
         assert not any("__pycache__" in name or name.endswith(".pyc") for name in names)
         assert not any(name.startswith("tests/") for name in names)
         manifest = tomllib.loads(archive.read("blender_manifest.toml").decode("utf-8"))
-        assert manifest["version"] == "0.1.5"
+        assert manifest["version"] == "0.1.6"
         assert manifest["blender_version_min"] == "5.2.0"
 
 

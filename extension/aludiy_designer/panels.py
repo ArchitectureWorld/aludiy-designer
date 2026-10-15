@@ -5,7 +5,14 @@ import json
 import bpy
 
 from . import view_sync
-from .runtime import EXTENSION_VERSION, active_member_id, get_catalog, get_project, settings
+from .runtime import (
+    EXTENSION_VERSION,
+    active_member_id,
+    active_node_id,
+    get_catalog,
+    get_project,
+    settings,
+)
 from .vendor.aludiy_core import member_length_mm
 
 
@@ -88,19 +95,55 @@ class ALUDIY_PT_selection(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
+        project = get_project(context.scene)
+        node_id = active_node_id(context)
         member_id = active_member_id(context)
+
+        if node_id:
+            node = project.nodes.get(node_id)
+            if node is None:
+                layout.label(text=f"节点 {node_id} 不在工程数据中", icon="ERROR")
+                return
+            layout.label(text=f"节点：{node.id}", icon="EMPTY_AXIS")
+            layout.label(
+                text=(
+                    f"X {node.position_mm[0]:.3f}  Y {node.position_mm[1]:.3f}  "
+                    f"Z {node.position_mm[2]:.3f} mm"
+                )
+            )
+            layout.operator("aludiy.edit_active_node", icon="ORIENTATION_GLOBAL")
+            return
+
         if not member_id:
-            layout.label(text="请选择型材轴线或三维实体")
+            layout.label(text="请选择型材轴线、三维实体或工程节点")
             return
         try:
-            project = get_project(context.scene)
             member = project.members[member_id]
             profile = get_catalog().get(member.profile_type_id)
         except Exception as exc:
             layout.label(text=str(exc), icon="ERROR")
             return
+
+        start_node = project.nodes[member.start_node_id]
+        end_node = project.nodes[member.end_node_id]
         layout.label(text=f"ID：{member.id}")
         layout.label(text=f"系统长度：{member_length_mm(project, member.id):.3f} mm")
+
+        points = layout.box()
+        points.label(text="起点坐标")
+        points.label(
+            text=f"X {start_node.position_mm[0]:.3f}  Y {start_node.position_mm[1]:.3f}  Z {start_node.position_mm[2]:.3f}"
+        )
+        op = points.operator("aludiy.edit_member_endpoint", text="编辑起点", icon="TRIA_LEFT")
+        op.endpoint = "START"
+        points.label(text="终点坐标")
+        points.label(
+            text=f"X {end_node.position_mm[0]:.3f}  Y {end_node.position_mm[1]:.3f}  Z {end_node.position_mm[2]:.3f}"
+        )
+        op = points.operator("aludiy.edit_member_endpoint", text="编辑终点", icon="TRIA_RIGHT")
+        op.endpoint = "END"
+        points.operator("aludiy.translate_active_member", text="精确平移", icon="TRANSFORM_MOVE")
+
         layout.label(text=f"型材：{profile.display_name}")
         layout.label(text=f"截面：{profile.section.width_mm:g} × {profile.section.height_mm:g} mm")
         layout.label(text=f"槽轨：{len(profile.section.interfaces)} 条")
