@@ -2,9 +2,18 @@
 
 面向 DIY 家居铝型材的线驱动设计工具。第一阶段以 Blender 5.2.x LTS 为体验式验收环境：用户精确绘制工程线，系统从独立型材目录生成联动三维体量和结构化项目数据。
 
+## G 与端点移动（0.1.7 Preview）
+
+更新后在 ALU DIY 工作区使用对象模式。选型材 → 点绿色起端或红色终端 → G → 鼠标拖动。
+主面板“移动与端点”提供保持连接／断开此杆端。G X/Y/Z 锁世界轴，输入默认 mm；Esc 或右键取消，Ctrl+Z 撤销。
+只选型材时 G 移动整杆，多选共享节点去重；普通对象的 G 仍为原生移动。混合选择明确提示分开。
+这不是通用约束求解，也不自动焊接重合节点；网格编辑、R/S 和完整工程吸附仍未接入。
+
+验收说明：[v0.1.7-alpha](docs/acceptance/v0.1.7-alpha.md)。
+
 ## 当前版本
 
-`v0.1.6-alpha`
+`v0.1.7-alpha`
 
 已包含：
 
@@ -37,16 +46,16 @@
 构建后使用：
 
 ```text
-dist/aludiy_designer-0.1.6.zip
+dist/aludiy_designer-0.1.7.zip
 ```
 
-远程仓库首次发布后，在 Blender 5.2.x LTS 的 **Preferences → Extensions → Repositories** 中添加：
+已使用远程 Preview 的用户直接刷新更新；首次安装时，在 Blender 5.2.x LTS 的 **Preferences → Extensions → Repositories** 中添加：
 
 ```text
 https://architectureworld.github.io/aludiy-designer/index.json
 ```
 
-随后可直接 `Refresh Remote → Update`。从旧的本地 ZIP 安装迁移到远程版时，可能需要最后卸载一次旧版。完整步骤见 [`docs/acceptance/v0.1.6-alpha.md`](docs/acceptance/v0.1.6-alpha.md)。
+随后可直接 `Refresh Remote → Update`。从旧的本地 ZIP 安装迁移到远程版时，可能需要最后卸载一次旧版。完整步骤见 [`docs/acceptance/v0.1.7-alpha.md`](docs/acceptance/v0.1.7-alpha.md)。
 
 ## 开发
 
@@ -73,8 +82,11 @@ tests/                           核心与扩展静态测试
 
 ## 验证状态
 
-普通 Python 自动化测试和静态编译在构建环境执行。由于该环境没有 Blender 二进制文件，实际 Blender 5.2.2 启动验证需要在目标机器运行：
+本轮已经运行普通 Python 套件、真实 Blender 5.2.2 后台、Xvfb/XTest 窗口键鼠回归以及保存重开。Windows 用户的显卡/DPI/插件组合仍需体验验收。基础命令：
 
 ```bash
 blender --background --factory-startup --python tools/blender_smoke_test.py
 ```
+
+工程移动后台测试：`blender -b --factory-startup --python-exit-code 1 --python tools/blender_movement_test.py`。
+真实窗口脚本：`tools/blender_gui_move_test.py`（Linux/X11，隔离配置并关闭初始欢迎页）。

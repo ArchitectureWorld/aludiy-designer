@@ -77,3 +77,5 @@ __all__ += [
 ]
 
 from .startup import try_optional_service
+
+from .movement import MovePreview, movement_node_ids, preview_move

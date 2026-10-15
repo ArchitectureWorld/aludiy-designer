@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import bpy
 
-from . import operators, panels, runtime, view_sync
+from . import operators, g_move, panels, runtime, view_sync
 from .vendor.aludiy_core.startup import try_optional_service
 
 bl_info = {
     "name": "AluDIY Designer",
     "author": "ArchitectureWorld",
-    "version": (0, 1, 6),
+    "version": (0, 1, 7),
     "blender": (5, 2, 0),
     "location": "View3D > Sidebar > AluDIY",
     "description": "Line-driven aluminum extrusion design with linked 3D feedback",
@@ -20,6 +20,7 @@ bl_info = {
 CLASSES = (
     runtime.AluDIYSceneSettings,
     *operators.CLASSES,
+    *g_move.CLASSES,
     *panels.CLASSES,
 )
 
@@ -59,6 +60,7 @@ def _register_optional_services() -> None:
         ("视角同步", view_sync.register_timer),
         ("视口绘制反馈", _register_overlay),
         ("工程删除快捷键", operators.register_keymaps),
+        ("G 移动与端点选择", g_move.register_services),
     ):
         error = try_optional_service(name, callback)
         if error is not None:
@@ -91,6 +93,7 @@ def register() -> None:
 
 
 def unregister() -> None:
+    g_move.unregister_services()
     try:
         operators.unregister_keymaps()
     except Exception as exc:

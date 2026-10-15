@@ -18,6 +18,7 @@ from .runtime import (
 _TIMER_INTERVAL_SECONDS = 0.12
 _VIEW_STATE: dict[tuple[int, int], "ViewState"] = {}
 _LAST_ENTITY_BY_WINDOW: dict[int, str | None] = {}
+_LAST_SELECTED_BY_WINDOW: dict[int, dict[str, str]] = {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,23 +246,27 @@ def setup_workspace(context: bpy.types.Context) -> int:
 
 
 def _sync_selection(window: bpy.types.Window) -> None:
+    from . import g_move
+    if g_move._ACTIVE is not None:
+        return
     view_layer = window.view_layer
-    active = view_layer.objects.active
-    entity_id = entity_id_from_object(active)
+    objects = [obj for obj in window.scene.objects
+               if obj.get("aludiy_managed") and obj.name in view_layer.objects
+               and entity_id_from_object(obj)]
     key = window.as_pointer()
-    if entity_id == _LAST_ENTITY_BY_WINDOW.get(key):
-        return
-    _LAST_ENTITY_BY_WINDOW[key] = entity_id
-    if entity_id is None:
-        return
-    for obj in window.scene.objects:
-        if obj.name not in view_layer.objects:
-            continue
-        candidate = entity_id_from_object(obj)
-        if candidate == entity_id:
-            obj.select_set(True)
-        elif obj.get("aludiy_managed"):
-            obj.select_set(False)
+    current = {o.name: entity_id_from_object(o) for o in objects if o.select_get()}
+    previous = _LAST_SELECTED_BY_WINDOW.get(key, {})
+    added = {eid for name, eid in current.items() if name not in previous}
+    removed = {eid for name, eid in previous.items() if name not in current}
+    desired = set(current.values()) - (removed - added)
+    for obj in objects:
+        wanted = entity_id_from_object(obj) in desired
+        if obj.select_get() != wanted:
+            obj.select_set(wanted)
+    _LAST_SELECTED_BY_WINDOW[key] = {
+        obj.name: entity_id_from_object(obj) for obj in objects if obj.select_get()
+    }
+    _LAST_ENTITY_BY_WINDOW[key] = entity_id_from_object(view_layer.objects.active)
 
 
 def _sync_window(window: bpy.types.Window) -> None:
@@ -314,3 +319,4 @@ def unregister_timer() -> None:
         bpy.app.timers.unregister(sync_tick)
     _VIEW_STATE.clear()
     _LAST_ENTITY_BY_WINDOW.clear()
+    _LAST_SELECTED_BY_WINDOW.clear()

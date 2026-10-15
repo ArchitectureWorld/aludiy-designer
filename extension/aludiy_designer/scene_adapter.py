@@ -173,6 +173,8 @@ def select_entity(
     view_layer: bpy.types.ViewLayer,
     entity_id: str,
 ) -> None:
+    # Newly rebuilt collections must be evaluated before selecting their objects.
+    view_layer.update()
     active = None
     for obj in scene.objects:
         if obj.name not in view_layer.objects:

@@ -323,9 +323,12 @@ def _draw_direction_overlay() -> None:
     try:
         if not settings(context.scene).project_json.strip():
             return
-        project = get_project(context.scene)
+        from . import g_move
+        project = g_move.display_project(context.scene)
         selected_id = active_member_id(context)
         selected_node_id = active_node_id(context)
+        if g_move._ACTIVE is not None and g_move._ACTIVE._candidate is not None:
+            selected_node_id = g_move._ACTIVE._candidate.detached_node_id or selected_node_id
         gpu.state.blend_set("ALPHA")
         for member_id in sorted(project.members):
             member = project.members[member_id]
