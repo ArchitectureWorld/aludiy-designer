@@ -20,9 +20,16 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # All six chunks are required before the one-time import starts.
           test "$(find bootstrap/v016 -maxdepth 1 -name 'source.b64.*' -type f | wc -l)" -eq 6
-          cat bootstrap/v016/source.b64.* | base64 --decode > /tmp/aludiy-v016.tar.xz
+          {
+            # The first staging file contains one duplicated boundary byte; keep its verified 8,000-byte payload.
+            head -c 8000 bootstrap/v016/source.b64.00
+            cat bootstrap/v016/source.b64.01 \
+                bootstrap/v016/source.b64.02 \
+                bootstrap/v016/source.b64.03 \
+                bootstrap/v016/source.b64.04 \
+                bootstrap/v016/source.b64.05
+          } | base64 --decode > /tmp/aludiy-v016.tar.xz
           echo "f5c9095efe86e7e81c7538e2afe50e6e8d219e78e9841e110e41f1f0f0c70768  /tmp/aludiy-v016.tar.xz" | sha256sum --check
           mkdir -p /tmp/aludiy-v016
           tar -xJf /tmp/aludiy-v016.tar.xz -C /tmp/aludiy-v016
