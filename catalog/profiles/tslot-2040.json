@@ -1,0 +1,218 @@
+{
+  "catalog_revision": "alpha-2026.10",
+  "display_name": "20×40 六槽（测试）",
+  "finish_options": [
+    "NATURAL"
+  ],
+  "interface_standard_id": "generic:tslot-alpha",
+  "material": {
+    "alloy": "unspecified-alpha",
+    "temper": "unspecified-alpha"
+  },
+  "profile_type_id": "generic:tslot-2040@0.1",
+  "schema_version": "0.1.0",
+  "section": {
+    "faces": [
+      {
+        "id": "FACE_PU",
+        "interface_ids": [
+          "FACE_PU.S0"
+        ],
+        "outward_normal_uv": [
+          1,
+          0
+        ],
+        "tangent_uv": [
+          0,
+          1
+        ]
+      },
+      {
+        "id": "FACE_NU",
+        "interface_ids": [
+          "FACE_NU.S0"
+        ],
+        "outward_normal_uv": [
+          -1,
+          0
+        ],
+        "tangent_uv": [
+          0,
+          -1
+        ]
+      },
+      {
+        "id": "FACE_PV",
+        "interface_ids": [
+          "FACE_PV.S0",
+          "FACE_PV.S1"
+        ],
+        "outward_normal_uv": [
+          0,
+          1
+        ],
+        "tangent_uv": [
+          1,
+          0
+        ]
+      },
+      {
+        "id": "FACE_NV",
+        "interface_ids": [
+          "FACE_NV.S0",
+          "FACE_NV.S1"
+        ],
+        "outward_normal_uv": [
+          0,
+          -1
+        ],
+        "tangent_uv": [
+          -1,
+          0
+        ]
+      }
+    ],
+    "geometry_hash": "sha256:b250b93322e660761f260f19515fc41298dee8945acf07e628f45658617066a1",
+    "height_mm": 20,
+    "interfaces": [
+      {
+        "center_uv_mm": [
+          20.0,
+          0
+        ],
+        "face_tangent_uv": [
+          0,
+          1
+        ],
+        "host_face_id": "FACE_PU",
+        "id": "FACE_PU.S0",
+        "interface_standard_id": "generic:tslot-alpha",
+        "kind": "T_SLOT_RAIL",
+        "lane_count": 1,
+        "lane_index": 0,
+        "outward_normal_uv": [
+          1,
+          0
+        ],
+        "station_domain": "FULL_MEMBER_LENGTH"
+      },
+      {
+        "center_uv_mm": [
+          -20.0,
+          0
+        ],
+        "face_tangent_uv": [
+          0,
+          -1
+        ],
+        "host_face_id": "FACE_NU",
+        "id": "FACE_NU.S0",
+        "interface_standard_id": "generic:tslot-alpha",
+        "kind": "T_SLOT_RAIL",
+        "lane_count": 1,
+        "lane_index": 0,
+        "outward_normal_uv": [
+          -1,
+          0
+        ],
+        "station_domain": "FULL_MEMBER_LENGTH"
+      },
+      {
+        "center_uv_mm": [
+          -10,
+          10.0
+        ],
+        "face_tangent_uv": [
+          1,
+          0
+        ],
+        "host_face_id": "FACE_PV",
+        "id": "FACE_PV.S0",
+        "interface_standard_id": "generic:tslot-alpha",
+        "kind": "T_SLOT_RAIL",
+        "lane_count": 2,
+        "lane_index": 0,
+        "outward_normal_uv": [
+          0,
+          1
+        ],
+        "station_domain": "FULL_MEMBER_LENGTH"
+      },
+      {
+        "center_uv_mm": [
+          10,
+          10.0
+        ],
+        "face_tangent_uv": [
+          1,
+          0
+        ],
+        "host_face_id": "FACE_PV",
+        "id": "FACE_PV.S1",
+        "interface_standard_id": "generic:tslot-alpha",
+        "kind": "T_SLOT_RAIL",
+        "lane_count": 2,
+        "lane_index": 1,
+        "outward_normal_uv": [
+          0,
+          1
+        ],
+        "station_domain": "FULL_MEMBER_LENGTH"
+      },
+      {
+        "center_uv_mm": [
+          -10,
+          -10.0
+        ],
+        "face_tangent_uv": [
+          -1,
+          0
+        ],
+        "host_face_id": "FACE_NV",
+        "id": "FACE_NV.S0",
+        "interface_standard_id": "generic:tslot-alpha",
+        "kind": "T_SLOT_RAIL",
+        "lane_count": 2,
+        "lane_index": 0,
+        "outward_normal_uv": [
+          0,
+          -1
+        ],
+        "station_domain": "FULL_MEMBER_LENGTH"
+      },
+      {
+        "center_uv_mm": [
+          10,
+          -10.0
+        ],
+        "face_tangent_uv": [
+          -1,
+          0
+        ],
+        "host_face_id": "FACE_NV",
+        "id": "FACE_NV.S1",
+        "interface_standard_id": "generic:tslot-alpha",
+        "kind": "T_SLOT_RAIL",
+        "lane_count": 2,
+        "lane_index": 1,
+        "outward_normal_uv": [
+          0,
+          -1
+        ],
+        "station_domain": "FULL_MEMBER_LENGTH"
+      }
+    ],
+    "origin_uv_mm": [
+      0,
+      0
+    ],
+    "representations": {
+      "lod0": "RECTANGULAR_ENVELOPE"
+    },
+    "section_id": "generic:tslot-2040:section@0.1",
+    "width_mm": 40
+  },
+  "series_id": "GENERIC:20",
+  "supplier_id": "GENERIC",
+  "supplier_sku": "TSLOT-2040"
+}

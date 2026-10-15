@@ -1,0 +1,77 @@
+{
+  "catalog_revision": "alpha-2026.10",
+  "members": [
+    {
+      "anchor_ref": "PROFILE_ORIGIN",
+      "end_node_id": "N-002",
+      "id": "M-001",
+      "profile_type_id": "generic:tslot-2020@0.1",
+      "revision": 1,
+      "roll_deg": 0.0,
+      "start_node_id": "N-001"
+    },
+    {
+      "anchor_ref": "PROFILE_ORIGIN",
+      "end_node_id": "N-003",
+      "id": "M-002",
+      "profile_type_id": "generic:tslot-2020@0.1",
+      "revision": 1,
+      "roll_deg": 0.0,
+      "start_node_id": "N-002"
+    },
+    {
+      "anchor_ref": "PROFILE_ORIGIN",
+      "end_node_id": "N-004",
+      "id": "M-003",
+      "profile_type_id": "generic:tslot-2020@0.1",
+      "revision": 1,
+      "roll_deg": 0.0,
+      "start_node_id": "N-003"
+    },
+    {
+      "anchor_ref": "PROFILE_ORIGIN",
+      "end_node_id": "N-001",
+      "id": "M-004",
+      "profile_type_id": "generic:tslot-2020@0.1",
+      "revision": 1,
+      "roll_deg": 0.0,
+      "start_node_id": "N-004"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "N-001",
+      "position_mm": [
+        0.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "N-002",
+      "position_mm": [
+        1200.0,
+        0.0,
+        0.0
+      ]
+    },
+    {
+      "id": "N-003",
+      "position_mm": [
+        1200.0,
+        600.0,
+        0.0
+      ]
+    },
+    {
+      "id": "N-004",
+      "position_mm": [
+        0.0,
+        600.0,
+        0.0
+      ]
+    }
+  ],
+  "project_id": "P-SAMPLE-001",
+  "schema_version": "0.1.0"
+}

@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aludiy.local/schema/interface-0.1.0.json",
+  "title": "AluDIY InterfaceDefinition",
+  "type": "object",
+  "required": ["id", "kind", "host_face_id", "center_uv_mm", "outward_normal_uv", "face_tangent_uv", "lane_index", "lane_count", "interface_standard_id"],
+  "properties": {
+    "id": {"type": "string", "minLength": 1},
+    "kind": {"const": "T_SLOT_RAIL"},
+    "host_face_id": {"type": "string", "minLength": 1},
+    "center_uv_mm": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+    "outward_normal_uv": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+    "face_tangent_uv": {"type": "array", "items": {"type": "number"}, "minItems": 2, "maxItems": 2},
+    "lane_index": {"type": "integer", "minimum": 0},
+    "lane_count": {"type": "integer", "minimum": 1},
+    "interface_standard_id": {"type": "string", "minLength": 1},
+    "station_domain": {"type": "string"}
+  },
+  "additionalProperties": false
+}

@@ -1,0 +1,5 @@
+﻿member_id,profile_type_id,start_node_id,end_node_id,system_length_mm
+M-001,generic:tslot-2020@0.1,N-001,N-002,1200.000
+M-002,generic:tslot-2020@0.1,N-002,N-003,600.000
+M-003,generic:tslot-2020@0.1,N-003,N-004,1200.000
+M-004,generic:tslot-2020@0.1,N-004,N-001,600.000

@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aludiy.local/schema/profile-0.1.0.json",
+  "title": "AluDIY ProfileType",
+  "type": "object",
+  "required": ["schema_version", "profile_type_id", "supplier_id", "supplier_sku", "series_id", "catalog_revision", "interface_standard_id", "display_name", "section"],
+  "properties": {
+    "schema_version": {"const": "0.1.0"},
+    "profile_type_id": {"type": "string", "minLength": 1},
+    "supplier_id": {"type": "string", "minLength": 1},
+    "supplier_sku": {"type": "string", "minLength": 1},
+    "series_id": {"type": "string", "minLength": 1},
+    "catalog_revision": {"type": "string", "minLength": 1},
+    "interface_standard_id": {"type": "string", "minLength": 1},
+    "display_name": {"type": "string", "minLength": 1},
+    "material": {"type": "object", "additionalProperties": {"type": "string"}},
+    "finish_options": {"type": "array", "items": {"type": "string"}},
+    "section": {"$ref": "section-0.1.0.json"}
+  },
+  "additionalProperties": false
+}

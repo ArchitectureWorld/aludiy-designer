@@ -1,0 +1,21 @@
+schema_version = "1.0.0"
+id = "aludiy_designer"
+version = "0.1.5"
+name = "AluDIY Designer"
+tagline = "Line-driven aluminum extrusion design with linked 3D feedback"
+maintainer = "ArchitectureWorld"
+type = "add-on"
+license = ["SPDX:GPL-3.0-or-later"]
+blender_version_min = "5.2.0"
+tags = ["3D View", "Modeling"]
+
+[permissions]
+files = "Import and export AluDIY project and cut-list files"
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  "*.pyc",
+  ".git/",
+  "*.zip",
+]

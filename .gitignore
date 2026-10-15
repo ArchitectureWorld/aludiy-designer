@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+*.zip
+*.blend1
+.DS_Store
+.superpowers/
+site/
+.worktrees/
+*.tar.xz
+extension/aludiy_designer/resources/*.sqlite
+packages/*.zip
+packages/SHA256SUMS.txt
