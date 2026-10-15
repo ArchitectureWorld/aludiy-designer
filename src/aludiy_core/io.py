@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
+import math
 from pathlib import Path
 from typing import Any
 
@@ -60,12 +62,12 @@ def create_sample_frame(
     project_id: str = "P-SAMPLE-001",
     catalog_revision: str = "alpha-2026.10",
 ) -> Project:
-    """Create a deterministic four-member rectangular XY frame."""
+    """Create an isolated sample project; use append_sample_frame for insertion."""
 
     width = float(width_mm)
     depth = float(depth_mm)
-    if width <= 0.0 or depth <= 0.0:
-        raise ValidationError("sample frame width and depth must be positive")
+    if not all(math.isfinite(v) and v > 0.0 for v in (width, depth)):
+        raise ValidationError("sample frame width and depth must be positive and finite")
     project = Project(project_id=project_id, catalog_revision=catalog_revision)
     node_positions = (
         ("N-001", (0.0, 0.0, 0.0)),
@@ -91,3 +93,66 @@ def create_sample_frame(
             )
         )
     return project
+
+
+@dataclass(frozen=True, slots=True)
+class SampleFrameInsertion:
+    project: Project
+    node_ids: tuple[str, ...]
+    member_ids: tuple[str, ...]
+
+
+def append_sample_frame(
+    project: Project,
+    width_mm: float,
+    depth_mm: float,
+    profile_type_id: str,
+    *,
+    origin_mm: tuple[float, float, float] = (0.0, 0.0, 0.0),
+) -> SampleFrameInsertion:
+    """Return an independent candidate containing the old design plus one frame.
+
+    Existing IDs, coordinates, member parameters and project metadata are not
+    changed. Coincident points are deliberately not welded. The caller commits
+    the candidate only after successfully regenerating the displayed geometry.
+    """
+
+    origin = tuple(float(value) for value in origin_mm)
+    if len(origin) != 3 or not all(math.isfinite(value) for value in origin):
+        raise ValidationError("sample origin must contain three finite coordinates")
+    sample = create_sample_frame(width_mm, depth_mm, profile_type_id)
+    candidate = Project.from_dict(project.to_dict())
+    used = set(candidate.nodes) | set(candidate.members)
+
+    def allocate(prefix: str) -> tuple[str, ...]:
+        numbers = [int(key[len(prefix) + 1:]) for key in used
+                   if key.startswith(prefix + '-') and key[len(prefix) + 1:].isdecimal()]
+        number = max(numbers, default=0)
+        result = []
+        for _ in range(4):
+            number += 1
+            entity_id = f'{prefix}-{number:03d}'
+            while entity_id in used:
+                number += 1
+                entity_id = f'{prefix}-{number:03d}'
+            used.add(entity_id)
+            result.append(entity_id)
+        return tuple(result)
+
+    node_ids = allocate('N')
+    member_ids = allocate('M')
+    node_map = dict(zip(sorted(sample.nodes), node_ids))
+    for old_id, new_id in node_map.items():
+        point = sample.nodes[old_id].position_mm
+        position = tuple(point[i] + origin[i] for i in range(3))
+        candidate.add_node(Node(new_id, position))
+    for old_id, new_id in zip(sorted(sample.members), member_ids):
+        member = sample.members[old_id]
+        candidate.add_member(Member(
+            id=new_id,
+            start_node_id=node_map[member.start_node_id],
+            end_node_id=node_map[member.end_node_id],
+            profile_type_id=member.profile_type_id,
+        ))
+    candidate.validate()
+    return SampleFrameInsertion(candidate, node_ids, member_ids)
