@@ -88,6 +88,7 @@ class ALUDIY_PT_main(bpy.types.Panel):
         row.prop(scene_settings, "sample_width_input")
         row.prop(scene_settings, "sample_depth_input")
         box.operator("aludiy.create_sample_frame", icon="MESH_CUBE")
+        box.label(text="插入位置：3D 游标（世界 XY）")
 
         box = layout.box()
         box.label(text="选中型材", icon="MOD_LENGTH")

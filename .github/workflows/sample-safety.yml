@@ -1,0 +1,76 @@
+name: Sample Safety Verification
+on:
+  push:
+    branches: ["fix/v0.1.8-sample-safety"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: sample-safety-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Generate runtime resources
+        run: |
+          python -m pip install pytest
+          python tools/sync_core_into_extension.py
+      - name: Regression tests
+        run: |
+          set -o pipefail
+          mkdir -p evidence
+          pytest -q | tee evidence/pytest.log
+      - name: Compile and repeatable build
+        run: |
+          set -euo pipefail
+          python -m compileall -q src extension tools
+          python tools/build_extension.py
+          P="$(python tools/release_meta.py package-name)"
+          cp "dist/$P" "$RUNNER_TEMP/first.zip"
+          python tools/build_extension.py
+          cmp "$RUNNER_TEMP/first.zip" "dist/$P"
+      - name: Prepare verified Blender 5.2.2 and X11
+        run: |
+          set -euo pipefail
+          B=blender-5.2.2-linux-x64.tar.xz
+          BASE=https://download.blender.org/release/Blender5.2
+          curl -fL --retry 3 "$BASE/$B" -o "$RUNNER_TEMP/$B"
+          curl -fL --retry 3 "$BASE/blender-5.2.2.sha256" -o "$RUNNER_TEMP/official.sha256"
+          (cd "$RUNNER_TEMP"; grep -F "$B" official.sha256 | sha256sum --check)
+          tar -xf "$RUNNER_TEMP/$B" -C "$RUNNER_TEMP"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb xauth libxtst6 ffmpeg
+      - name: Blender sample insertion and existing movement regressions
+        env:
+          BLENDER_USER_CONFIG: ${{ runner.temp }}/sample-config
+          ALUDIY_EVIDENCE_DIR: ${{ github.workspace }}/evidence/sample
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set -euo pipefail
+          B="$RUNNER_TEMP/blender-5.2.2-linux-x64/blender"
+          mkdir -p "$BLENDER_USER_CONFIG"
+          "$B" -b --factory-startup --python-exit-code 1 --python tools/blender_smoke_test.py > evidence/smoke.log 2>&1
+          "$B" -b --factory-startup --python-exit-code 1 --python tools/blender_movement_test.py > evidence/movement.log 2>&1
+          "$B" -b --factory-startup --python-expr 'import bpy; bpy.context.preferences.view.show_splash=False; bpy.ops.wm.save_userpref()'
+          timeout 150s xvfb-run -a -s '-screen 0 1800x1100x24' "$B" --gpu-backend opengl -t 2 -p 0 0 1680 1000 --python tools/blender_sample_safety_test.py > evidence/sample-gui.log 2>&1
+          python -c 'import json; r=json.load(open("evidence/sample/report.json")); assert r["status"]=="passed"; print("Sample GUI checks:",len(r["checks"]))'
+          "$B" -b evidence/sample/sample-safety.blend --python-exit-code 1 --python-expr 'import sys,json; from pathlib import Path; sys.path.insert(0,str(Path("extension").resolve())); import aludiy_designer as a; a.register(); import bpy; from aludiy_designer import runtime; assert runtime.get_project(bpy.context.scene).to_dict()==json.load(open("evidence/sample/expected.aludiy.json")); print("SAMPLE_REOPEN_OK"); a.unregister()' > evidence/sample-reopen.log 2>&1
+          export ALUDIY_EVIDENCE_DIR="$GITHUB_WORKSPACE/evidence/move"
+          timeout 150s xvfb-run -a -s '-screen 0 1800x1100x24' "$B" --gpu-backend opengl -t 2 -p 0 0 1680 1000 --python tools/blender_gui_move_test.py > evidence/move-gui.log 2>&1
+          python -c 'import json; r=json.load(open("evidence/move/report.json")); assert r["status"]=="passed"; print("Movement GUI checks:",len(r["checks"]))'
+          if grep -E 'Traceback|Python script error' evidence/*gui.log; then exit 1; fi
+      - name: Retain verification results
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: sample-safety-evidence
+          path: |
+            evidence/
+            dist/*.zip
+          retention-days: 14

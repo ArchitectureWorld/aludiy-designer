@@ -10,6 +10,7 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 from mathutils import Vector
 
 from . import runtime, scene_adapter, view_sync
+from .vendor.aludiy_core.io import append_sample_frame
 from .runtime import (
     HELPER_COLLECTION,
     active_member_id,
@@ -281,12 +282,33 @@ class ALUDIY_OT_setup_workspace(bpy.types.Operator):
 class ALUDIY_OT_new_project(bpy.types.Operator):
     bl_idname = "aludiy.new_project"
     bl_label = "新建空白项目"
+    bl_description = "清空当前 AluDIY 工程并新建；已有内容时先请求确认"
     bl_options = {"REGISTER", "UNDO"}
 
+    @classmethod
+    def poll(cls, context):
+        return getattr(context, "mode", "OBJECT") == "OBJECT"
+
+    def invoke(self, context, event):
+        project = get_project(context.scene)
+        if project.members or project.nodes:
+            return context.window_manager.invoke_confirm(
+                self, event, title="清空当前工程并新建？",
+                message=f"将移除当前 {len(project.members)} 根型材及 {len(project.nodes)} 个节点，请先保存。",
+                confirm_text="清空并新建", icon="WARNING",
+            )
+        return self.execute(context)
+
     def execute(self, context):
-        project = empty_project()
-        set_project(context.scene, project)
-        scene_adapter.rebuild_scene(context.scene, project, get_catalog())
+        try:
+            original_project = get_project(context.scene)
+            _commit_project_update(
+                context, original_project, empty_project(), selected_entity_id="",
+            )
+        except Exception as exc:
+            self.report({"ERROR"}, str(exc))
+            set_status(context.scene, f"新建失败，已保留原工程：{exc}")
+            return {"CANCELLED"}
         set_status(context.scene, "已创建空白工程项目")
         return {"FINISHED"}
 
@@ -357,9 +379,13 @@ class ALUDIY_OT_delete_selected_members(bpy.types.Operator):
 
 class ALUDIY_OT_create_sample_frame(bpy.types.Operator):
     bl_idname = "aludiy.create_sample_frame"
-    bl_label = "生成矩形样例框架"
-    bl_description = "根据精确宽度和深度生成四根线及联动实体"
+    bl_label = "插入矩形样例"
+    bl_description = "在 3D 游标处插入世界 XY 矩形框架；保留已有工程，不自动合并节点"
     bl_options = {"REGISTER", "UNDO"}
+
+    @classmethod
+    def poll(cls, context):
+        return getattr(context, "mode", "OBJECT") == "OBJECT"
 
     def execute(self, context):
         scene_settings = settings(context.scene)
@@ -368,14 +394,25 @@ class ALUDIY_OT_create_sample_frame(bpy.types.Operator):
             depth = parse_length_mm(scene_settings.sample_depth_input)
             profile_id = _selected_profile(context.scene)
             get_catalog().get(profile_id)
-            project = create_sample_frame(width, depth, profile_id)
-            set_project(context.scene, project)
-            scene_adapter.rebuild_scene(context.scene, project, get_catalog())
+            original_project = get_project(context.scene)
+            scale = 1.0 / scene_adapter.MM_TO_M
+            origin = tuple(float(value) * scale for value in context.scene.cursor.location)
+            result = append_sample_frame(
+                original_project, width, depth, profile_id, origin_mm=origin,
+            )
+            _commit_project_update(
+                context, original_project, result.project,
+                selected_entity_id=result.member_ids[0],
+            )
         except Exception as exc:
             self.report({"ERROR"}, str(exc))
-            set_status(context.scene, f"样例生成失败：{exc}")
+            set_status(context.scene, f"样例插入失败，已保留原工程：{exc}")
             return {"CANCELLED"}
-        set_status(context.scene, f"已生成 {width:g} × {depth:g} mm 矩形框架")
+        set_status(
+            context.scene,
+            f"已插入 {width:g} × {depth:g} mm 样例（4 根）；"
+            f"保留原有 {len(original_project.members)} 根型材；不自动连接",
+        )
         return {"FINISHED"}
 
 
