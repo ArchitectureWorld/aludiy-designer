@@ -4,6 +4,15 @@ All notable AluDIY Designer changes are recorded here. The project is in alpha; 
 
 ## Unreleased
 
+## 0.1.9-alpha
+
+- Default G endpoint snapping with confirmed shared-node reconnection, including zero-displacement joins.
+- Hold Ctrl during G for temporary free movement; keep old connection mode separate from snapping.
+- Add cursor-nearest source anchor, Tab candidate cycling, connect-to-target picker and configurable ground elevation (placement only).
+- Preserve exact numeric displacement, axis restrictions, selection on cancel, transactional preview, Undo/Redo and normal-object native G.
+- Add pure-core, actual Blender backend and X11 keyboard/mouse reconnection regressions.
+
+
 - v0.1.9 planned: shared engineering snapping for drawing and G movement; distinguish location from connection.
 
 ## 0.1.8-alpha

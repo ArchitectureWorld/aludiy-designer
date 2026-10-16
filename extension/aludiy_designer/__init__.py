@@ -10,7 +10,7 @@ from .vendor.aludiy_core.startup import try_optional_service
 bl_info = {
     "name": "AluDIY Designer",
     "author": "ArchitectureWorld",
-    "version": (0, 1, 8),
+    "version": (0, 1, 9),
     "blender": (5, 2, 0),
     "location": "View3D > Sidebar > AluDIY",
     "description": "Line-driven aluminum extrusion design with linked 3D feedback",

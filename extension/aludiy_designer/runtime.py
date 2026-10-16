@@ -13,7 +13,7 @@ from .vendor.aludiy_core import ProfileCatalog, Project
 
 CATALOG_REVISION = "alpha-2026.10"
 PROJECT_SCHEMA_VERSION = "0.1.0"
-EXTENSION_VERSION = "0.1.8-alpha"
+EXTENSION_VERSION = "0.1.9-alpha"
 WORKSPACE_NAME = "ALU DIY"
 AXIS_COLLECTION = "ALUDIY_AXES"
 SOLID_COLLECTION = "ALUDIY_SOLIDS"
@@ -74,6 +74,10 @@ class AluDIYSceneSettings(bpy.types.PropertyGroup):
                ("DETACH", "断开此杆端", "只让选定型材端点离开公共连接点")),
         default="KEEP", options={"SKIP_SAVE"},
     )
+    ground_snap_enabled: bpy.props.BoolProperty(name="地面标高吸附", default=True,
+        description="仅定位到指定水平标高，不创建固定或承载约束")
+    ground_elevation_input: bpy.props.StringProperty(name="地面标高", default="0",
+        description="默认毫米，可输入 100、0.1m；不是型材外表面的落地检查")
     project_json: bpy.props.StringProperty(
         name="Project JSON",
         default="",
