@@ -21,6 +21,7 @@ from .runtime import (
     settings,
 )
 from .vendor.aludiy_core import member_length_mm
+from .vendor.aludiy_core.snapping import describe_candidate
 from .vendor.aludiy_core.drawing import axis_vector, workplane_angle_deg
 
 MM_TO_M = 0.001
@@ -359,18 +360,32 @@ def _draw_direction_overlay() -> None:
         gpu.state.blend_set("NONE")
 
 
-def _draw_dimension_panel(anchor: tuple[float, float], lines: list[str]) -> None:
-    if not lines:
-        return
+def _draw_dimension_panel(anchor, lines) -> None:
+    from .vendor.aludiy_core.overlay_layout import wrap_lines, place_box
+    region = bpy.context.region
+    left, bottom, right, top = 8.0, 8.0, region.width-8.0, region.height-8.0
+    # Overlaid sidebars/tools occupy WINDOW pixels even when the region width
+    # still reports the whole area. Avoid them instead of drawing behind them.
+    for other in bpy.context.area.regions:
+        if other.width <= 1 or other.height <= 1:
+            continue
+        if other.type in {'UI', 'TOOLS'}:
+            if other.x < region.x+region.width/2:
+                left = max(left, other.x+other.width-region.x+8)
+            else:
+                right = min(right, other.x-region.x-8)
+        elif other.type in {'HEADER', 'TOOL_HEADER'} and other.y > region.y+region.height/2:
+            top = min(top, other.y-region.y-8)
+    available = max(60.0, right-left)
     blf.size(0, 12.0)
-    widths = [blf.dimensions(0, line)[0] for line in lines]
-    width = max(widths, default=140.0) + 24.0
-    height = 23.0 * len(lines) + 14.0
-    x = anchor[0] + 16.0
-    y = anchor[1] + 18.0
-    _filled_rect(x, y, width, height, PANEL_COLOR)
-    for index, line in enumerate(lines):
-        _text(x + 12.0, y + height - 23.0 * (index + 1), line, size=12.0)
+    measure = lambda value: blf.dimensions(0, value)[0]
+    rows = wrap_lines(lines, measure, max(30.0, available-24))
+    width = min(available, max((measure(line) for line in rows), default=0.0)+24)
+    height = len(rows)*21.0+18.0
+    x,y = place_box(anchor, (width,height), (left,bottom,right,top))
+    _filled_rect(x,y,width,height,PANEL_COLOR)
+    for i,line in enumerate(rows):
+        _text(x+12, y+height-21*(i+1), line, size=12.0)
 
 
 def _draw_guides(start: tuple[float, float], end: tuple[float, float]) -> None:
@@ -399,33 +414,50 @@ def _draw_member_feedback(operator) -> None:
         context.area is None
         or context.region is None
         or context.region_data is None
-        or context.area.as_pointer() != getattr(operator, "_source_area_pointer", -1)
-        or context.region.as_pointer() != getattr(operator, "_source_region_pointer", -1)
+        or context.region.type != "WINDOW"
+        or context.window.as_pointer() != getattr(operator, "_source_window_pointer", -1)
+        or context.scene != getattr(operator, "_scene", None)
     ):
         return
-    current_mm = getattr(operator, "_current_mm", None)
+    current_mm = getattr(operator, "_display_point", None)
     if current_mm is None:
         return
     current = _project(current_mm)
     if current is None:
         return
     current_2d = (current.x, current.y)
-    snap_node_id = getattr(operator, "_snap_node_id", None)
+    snap = getattr(operator, "_display_snap", None)
+    snap_node_id = snap.node_id if snap else None
     typed_text = getattr(operator, "_typed", "")
     work_plane = getattr(operator, "_work_plane", "XY")
     axis_lock = getattr(operator, "_axis_lock", None)
 
     gpu.state.blend_set("ALPHA")
     try:
-        if snap_node_id:
+        if snap:
             draw_snap_marker(current_2d)
         else:
             draw_crosshair(current_2d)
 
-        mode_label = f"工作平面 {work_plane}"
+        plane_lock = getattr(operator, "_plane_lock", False)
+        mode_label = f"自由定位面 {work_plane}"
         if axis_lock:
-            mode_label += f"  ·  {axis_lock} 轴锁定"
-        lines = [mode_label, format_coordinate_label(current_mm, snap_node_id)]
+            mode_label = f"排除 {axis_lock} 平面锁定" if plane_lock else f"{axis_lock} 轴锁定"
+        project = get_project(context.scene)
+        hint = ("Ctrl 自由定位 · 不吸附" if getattr(operator, "_free", False) else
+                "精确输入优先 · 仅定位" if typed_text and snap is None else describe_candidate(snap, project))
+        if snap and len(getattr(operator, '_snap_options', ())) > 1:
+            hint += f" · Tab {operator._snap_choice % len(operator._snap_options)+1}/{len(operator._snap_options)}"
+        error = getattr(operator, '_input_error', '') or getattr(operator, '_cursor_error', '')
+        if snap and snap.member_id:
+            host = project.members[snap.member_id]
+            a = _project(project.nodes[host.start_node_id].position_mm)
+            b = _project(project.nodes[host.end_node_id].position_mm)
+            if a is not None and b is not None:
+                _polyline([(a.x,a.y),(b.x,b.y)],color=SNAP_COLOR,width=1.5)
+        lines = [mode_label, hint, format_coordinate_label(current_mm, None)]
+        if error:
+            lines.append('不可提交：' + error)
         start_mm = getattr(operator, "_start_mm", None)
         if start_mm is not None:
             try:
@@ -437,7 +469,7 @@ def _draw_member_feedback(operator) -> None:
             if start is not None and end is not None:
                 start_2d = (start.x, start.y)
                 end_2d = (end.x, end.y)
-                if axis_lock:
+                if axis_lock and not plane_lock:
                     _draw_axis_guide(start_mm, axis_lock)
                 elif work_plane == "XY":
                     _draw_guides(start_2d, end_2d)

@@ -1,5 +1,12 @@
 # AluDIY Designer
 
+## Latest Preview: 0.1.11-alpha
+
+Draw directly from profile midpoints and body-axis stations. Drawing and G share snap candidates, Ctrl temporary free positioning, Tab target cycling and float64 engineering coordinates. Snapping does not create associations; use the explicit multi-selection association commands.
+
+[Acceptance guide](docs/acceptance/v0.1.11-alpha.md) · [Visual progress](docs/progress/index.html) · [Implementation plan](docs/plans/v0.1.11-unified-drawing-snapping.md)
+
+
 面向 DIY 家居铝型材的线驱动设计工具。第一阶段以 Blender 5.2.x LTS 为体验式验收环境：用户精确绘制工程线，系统从独立型材目录生成联动三维体量和结构化项目数据。
 
 ## G 与端点移动（0.1.7 Preview）

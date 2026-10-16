@@ -4,6 +4,16 @@ All notable AluDIY Designer changes are recorded here. The project is in alpha; 
 
 ## Unreleased
 
+## 0.1.11-alpha
+
+- Share geometry-only endpoint, midpoint, perpendicular-foot and member-axis snap candidates between drawing and G.
+- Pick elevated rod-body points directly when beginning a line; Ctrl toggles snapping and Tab cycles explicit candidates.
+- Add explicit Shift+axis plane locks to drawing; numeric lengths remain double-precision and override snap position/markers.
+- Share the viewport ray/projection unit boundary to eliminate sub-micrometre differences between drawing and movement.
+- Mirror drawing target feedback to both views while preventing sidebar/other-view clicks from creating geometry.
+- Preserve independent new endpoints and existing manual associations; no schema upgrade.
+- Record the user's basic acceptance of 0.1.10. Add real drawing/movement/association/Undo/reopen verification.
+
 ## 0.1.10-alpha
 
 - Highlight every selected engineering member/node in both viewports with deduplicated counts and separate affected-object dashes.

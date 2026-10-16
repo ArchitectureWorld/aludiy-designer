@@ -13,12 +13,13 @@ from bpy_extras import view3d_utils
 from mathutils import Matrix, Vector
 
 from . import runtime, scene_adapter
+from .viewport_geometry import world_ray_mm, project_point_mm
 from .vendor.aludiy_core import Project, parse_distance_mm
 from .vendor.aludiy_core.associations import exact_snap_delta, create_associations, remove_associations
 from .vendor.aludiy_core.geometry import derive_member_mesh
 from .vendor.aludiy_core.movement import movement_node_ids, preview_move
 from .vendor.aludiy_core.errors import ValidationError
-from .vendor.aludiy_core.snapping import node_candidates, ground_candidate, preview_reconnect, member_candidates
+from .vendor.aludiy_core.snapping import node_candidates, ground_candidate, preview_reconnect, member_candidates, engineering_candidates, describe_candidate
 
 _ACTIVE = None
 _KEYMAPS = []
@@ -401,9 +402,7 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
             self._pointer_start = None
 
     def _project_point(self, point):
-        p = view3d_utils.location_3d_to_region_2d(self._region,
-            self._area.spaces.active.region_3d,Vector(point)*.001,default=None)
-        return tuple(p) if p is not None else None
+        return project_point_mm(self._region, self._area.spaces.active.region_3d, point)
 
     def _snap_delta(self, context, delta):
         self._snap = None
@@ -421,29 +420,17 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
         if cursor is None:
             self._snap_options = ()
             return delta
-        options = node_candidates(self._original,origin_mm=self._original.nodes[self._anchor_id].position_mm,
-            cursor_px=cursor,project_point=self._project_point,excluded_node_ids=excluded,
-            radius_px=runtime.settings(self._scene).snap_pixel_radius,
-            axis=self._axis,plane_lock=self._plane_lock,exact_position_mm=exact)
-        if not options and not self.connect_only:
-            ro,rd=self._ray(self._mouse)
-            excluded_members={m.id for m in self._original.members.values()
-                              if m.start_node_id in self._target_ids or m.end_node_id in self._target_ids}
-            options=member_candidates(self._original,
-                origin_mm=self._original.nodes[self._anchor_id].position_mm,
-                cursor_px=cursor,project_point=self._project_point,
-                ray_origin_mm=tuple(ro),ray_direction=tuple(rd),excluded_member_ids=excluded_members,
-                radius_px=runtime.settings(self._scene).snap_pixel_radius,axis=self._axis,
-                plane_lock=self._plane_lock,exact_position_mm=exact)
-        # Endpoints win over the ground. Midpoints/slots are intentionally not
-        # advertised as connected until persistent host relationships exist.
-        if not options and self._ground is not None and not self._typed and not self.connect_only:
-            ground = ground_candidate(self._original.nodes[self._anchor_id].position_mm,tuple(self._original.nodes[self._anchor_id].position_mm[i]+delta[i] for i in range(3)),
-                ground_mm=self._ground,project_point=self._project_point,
-                radius_px=runtime.settings(self._scene).snap_pixel_radius,
-                axis=self._axis,plane_lock=self._plane_lock)
-            if ground:
-                options = (ground,)
+        ro, rd = world_ray_mm(self._region, self._area.spaces.active.region_3d, self._mouse)
+        excluded_members = {m.id for m in self._original.members.values()
+                            if m.start_node_id in self._target_ids or m.end_node_id in self._target_ids}
+        origin = self._original.nodes[self._anchor_id].position_mm
+        options = engineering_candidates(
+            self._original, origin_mm=origin, cursor_px=cursor, project_point=self._project_point,
+            ray_origin_mm=tuple(ro), ray_direction=tuple(rd), excluded_node_ids=excluded,
+            excluded_member_ids=excluded_members, radius_px=runtime.settings(self._scene).snap_pixel_radius,
+            axis=self._axis, plane_lock=self._plane_lock, exact_position_mm=exact,
+            ground_mm=self._ground, raw_position_mm=tuple(origin[i]+delta[i] for i in range(3)),
+            nodes_only=self.connect_only)
         keys = tuple(c.key for c in options)
         if keys != self._choice_keys:
             self._snap_choice = 0
@@ -461,12 +448,8 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
             return '精确输入优先 · 未命中节点，不新建连接'
         if self._snap is not None:
             suffix = f' · Tab 切换 {self._snap_choice % len(self._snap_options)+1}/{len(self._snap_options)}' if len(self._snap_options)>1 else ''
-            if self._snap.kind=='NODE':
-                return f'端点 {self._snap.node_id} · 仅定位，不自动关联'+suffix
-            if self._snap.member_id:
-                return f'{"中点" if self._snap.kind=="MIDPOINT" else "杆身轴线"} {self._snap.member_id} · 仅定位'+suffix
-            return f'地面 Z={self._ground:g} mm · 仅定位，不建立约束'
-        return '吸附仅定位 · 端点 / 杆身 / 地面 · Ctrl 自由移动'
+            return describe_candidate(self._snap, self._original) + suffix
+        return describe_candidate(None, self._original) + ' · Ctrl 自由移动'
 
     def _update(self, context):
         if self._waiting: return

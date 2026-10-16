@@ -10,6 +10,7 @@ from bpy_extras.io_utils import ExportHelper, ImportHelper
 from mathutils import Vector
 
 from . import runtime, scene_adapter, view_sync
+from .viewport_geometry import world_ray_mm, project_point_mm
 from .vendor.aludiy_core.io import append_sample_frame
 from .runtime import (
     HELPER_COLLECTION,
@@ -51,7 +52,10 @@ from .vendor.aludiy_core.drawing import (
     polar_endpoint_mm,
 )
 
+from .vendor.aludiy_core.snapping import engineering_candidates, describe_candidate, resolve_draw_endpoint, JOIN_TOLERANCE_MM
+
 _PREVIEW_NAME = "_ALUDIY_MEMBER_PREVIEW"
+_ACTIVE_DRAW = None
 
 
 def _overlay_module():
@@ -137,12 +141,7 @@ def _view_ray_mm(
     if region is None or region_data is None:
         return None
     coordinate = (event.mouse_x - region.x, event.mouse_y - region.y)
-    origin = view3d_utils.region_2d_to_origin_3d(region, region_data, coordinate)
-    direction = view3d_utils.region_2d_to_vector_3d(region, region_data, coordinate)
-    return (
-        tuple(float(value) * 1000.0 for value in origin),
-        tuple(float(value) for value in direction),
-    )
+    return world_ray_mm(region, region_data, coordinate)
 
 
 def _nearest_node_in_view(
@@ -174,49 +173,63 @@ def _nearest_node_in_view(
 
 
 def _point_from_event(context: bpy.types.Context, event, operator):
+    """Pick with the same engineering candidates as G, never change topology."""
     project = get_project(context.scene)
-    snapped = _nearest_node_in_view(
-        context,
-        event,
-        project,
-        settings(context.scene).snap_pixel_radius,
-    )
-    if (
-        snapped is not None
-        and operator._start_mm is not None
-        and operator._axis_lock is not None
-        and not point_is_on_axis(
-            snapped.position_mm,
-            axis_origin_mm=operator._start_mm,
-            axis=operator._axis_lock,
-            tolerance_mm=settings(context.scene).snap_tolerance_mm,
-        )
-    ):
-        snapped = None
-    if snapped is not None:
-        return snapped.position_mm, snapped.id
+    region = _window_region(context.area)
+    rv3d = context.area.spaces.active.region_3d
     ray = _view_ray_mm(context, event)
     if ray is None:
         return None, None
-    ray_origin_mm, ray_direction = ray
-    if operator._start_mm is not None and operator._axis_lock is not None:
-        point = closest_point_on_axis_to_ray(
-            axis_origin_mm=operator._start_mm,
-            axis=operator._axis_lock,
-            ray_origin_mm=ray_origin_mm,
-            ray_direction=ray_direction,
-        )
-    else:
-        point = point_on_workplane_from_ray(
-            ray_origin_mm=ray_origin_mm,
-            ray_direction=ray_direction,
-            work_plane=operator._work_plane,
-            offset_mm=operator._workplane_offset_mm,
-            start_mm=operator._start_mm,
-        )
-    snapped_world = _nearest_node(project, point, settings(context.scene).snap_tolerance_mm)
-    if snapped_world is not None:
-        return snapped_world.position_mm, snapped_world.id
+    ro, rd = ray
+    axis = operator._axis_lock if operator._start_mm is not None else None
+    plane_lock = bool(getattr(operator, '_plane_lock', False) and axis)
+    point, pointer_error = None, None
+    try:
+        if axis and not plane_lock:
+            point = closest_point_on_axis_to_ray(
+                axis_origin_mm=operator._start_mm, axis=axis,
+                ray_origin_mm=ro, ray_direction=rd)
+        else:
+            plane = {'X': 'YZ', 'Y': 'XZ', 'Z': 'XY'}[axis] if plane_lock else operator._work_plane
+            point = point_on_workplane_from_ray(
+                ray_origin_mm=ro, ray_direction=rd, work_plane=plane,
+                offset_mm=operator._workplane_offset_mm, start_mm=operator._start_mm)
+    except GeometryError as exc:
+        pointer_error = exc
+    operator._snap = None
+    if getattr(operator, '_free', False):
+        operator._snap_options = ()
+        operator._choice_keys = ()
+        if point is None and pointer_error:
+            raise pointer_error
+        return point, None
+    def project_point(position):
+        return project_point_mm(region, rv3d, position)
+    start = operator._start_mm
+    origin = start or point or (0.0, 0.0, operator._workplane_offset_mm)
+    excluded = {nid for nid, node in project.nodes.items()
+                if start is not None and math.dist(node.position_mm, start) <= JOIN_TOLERANCE_MM}
+    opts = engineering_candidates(
+        project, origin_mm=origin,
+        cursor_px=(event.mouse_x - region.x, event.mouse_y - region.y),
+        project_point=project_point, ray_origin_mm=ro, ray_direction=rd,
+        excluded_node_ids=excluded, radius_px=settings(context.scene).snap_pixel_radius,
+        axis=axis, plane_lock=plane_lock, perpendicular=start is not None)
+    if start is not None:
+        opts = tuple(c for c in opts if math.dist(c.position_mm, start) > JOIN_TOLERANCE_MM)
+    keys = tuple(c.key for c in opts)
+    if keys != getattr(operator, '_choice_keys', ()):
+        operator._snap_choice = 0
+    operator._choice_keys, operator._snap_options = keys, opts
+    if opts:
+        operator._snap = opts[getattr(operator, '_snap_choice', 0) % len(opts)]
+        return operator._snap.position_mm, operator._snap.node_id
+    if point is None and pointer_error:
+        # Axis looking down the camera is ambiguous for the mouse, but a typed
+        # exact length on the axis remains well-defined, using positive direction.
+        if operator._typed and start is not None and axis and not plane_lock:
+            return tuple(start[i] + axis_vector(axis)[i] for i in range(3)), None
+        raise pointer_error
     return point, None
 
 
@@ -706,10 +719,20 @@ class ALUDIY_OT_draw_member(bpy.types.Operator):
     _source_area_pointer = 0
     _source_region_pointer = 0
     _draw_feedback_handle = None
+    _plane_lock = False
+    _snap = None
+    _display_snap = None
+    _display_point = None
+    _free = False
+    _snap_options = ()
+    _snap_choice = 0
+    _input_error = ""
 
     @classmethod
     def poll(cls, context):
-        if context.area is None or context.area.type != "VIEW_3D":
+        from . import g_move
+        if (context.area is None or context.area.type != "VIEW_3D" or context.mode != "OBJECT"
+                or _ACTIVE_DRAW is not None or g_move._ACTIVE is not None):
             return False
         if context.workspace is not None and context.workspace.name == runtime.WORKSPACE_NAME:
             return view_sync.is_line_view_context(context)
@@ -727,45 +750,64 @@ class ALUDIY_OT_draw_member(bpy.types.Operator):
             context.area.header_text_set(None)
 
     def _resolved_end(self):
-        if self._start_mm is None or self._current_mm is None:
-            return self._current_mm
-        if not self._typed:
-            return self._current_mm
-        if self._typed.startswith("@"):
-            polar = parse_polar(self._typed)
-            return polar_endpoint_mm(
-                self._start_mm,
-                self._work_plane,
-                polar.length_mm,
-                polar.angle_deg,
-            )
-        length = parse_length_mm(self._typed)
-        if self._axis_lock is not None:
-            direction = Vector(axis_vector(self._axis_lock))
-            candidate = Vector(self._current_mm) - Vector(self._start_mm)
-            if candidate.dot(direction) < 0.0:
-                direction.negate()
-        else:
-            direction = Vector(self._current_mm) - Vector(self._start_mm)
-        if direction.length < 1.0e-9:
-            direction = Vector((1.0, 0.0, 0.0))
-        else:
-            direction.normalize()
-        point = Vector(self._start_mm) + direction * length
-        return tuple(point)
+        return resolve_draw_endpoint(self._start_mm, self._current_mm, self._typed,
+            axis=self._axis_lock if not self._plane_lock else None,
+            work_plane=self._work_plane)
 
     def _refresh_preview(self, context) -> None:
+        self._input_error = ''
+        self._display_snap = self._snap
+        self._display_point = self._current_mm
         if self._start_mm is not None and self._current_mm is not None:
             try:
                 preview_end = self._resolved_end()
-            except InputParseError:
+                self._display_point = preview_end
+                if self._snap and math.dist(preview_end, self._snap.position_mm) > JOIN_TOLERANCE_MM:
+                    self._display_snap = None
+            except InputParseError as exc:
+                self._input_error = str(exc)
+                self._display_snap = None
                 preview_end = self._current_mm
             _update_preview(context.scene, self._start_mm, preview_end)
-        if context.area is not None:
-            context.area.tag_redraw()
+        self._snap_node_id = self._display_snap.node_id if self._display_snap else None
+        self._update_header(context)
+        self._redraw_views(context)
+
+    def _redraw_views(self, context):
+        for area in context.window.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
+
+    def _update_header(self, context):
+        if self._free:
+            hint = 'Ctrl 自由定位 · 不吸附'
+        elif self._typed and self._display_snap is None:
+            hint = '精确长度优先 · 仅定位'
+        else:
+            hint = describe_candidate(self._display_snap, get_project(context.scene))
+        if self._display_snap and len(self._snap_options) > 1:
+            hint += f' · Tab {self._snap_choice % len(self._snap_options)+1}/{len(self._snap_options)}'
+        if self._axis_lock:
+            mode = ('平面排除 ' if self._plane_lock else '锁轴 ') + self._axis_lock
+        else:
+            mode = f'{self._work_plane} 自由定位面'
+        self._header(context, f'{mode} | {self._input_error or self._cursor_error or hint} | 右键结束')
+
+    def _locate(self, context, event):
+        try:
+            point, node_id = _point_from_event(context, event, self)
+            if point is not None:
+                self._current_mm, self._snap_node_id = point, node_id
+                self._cursor_error = ''
+        except (GeometryError, ValidationError) as exc:
+            self._cursor_error = str(exc)
+            self._snap = None
+        self._refresh_preview(context)
 
     def _commit(self, context) -> bool:
         try:
+            if getattr(self, '_cursor_error', '') and not self._typed:
+                return False
             end_mm = self._resolved_end()
             if end_mm is None or self._start_mm is None:
                 return False
@@ -779,6 +821,10 @@ class ALUDIY_OT_draw_member(bpy.types.Operator):
             self._current_mm = self._start_mm
             self._typed = ""
             self._axis_lock = None
+            self._plane_lock = False
+            self._snap = self._display_snap = None
+            self._snap_options, self._choice_keys = (), ()
+            self._snap_choice = 0
             self._committed_count += 1
             set_status(context.scene, f"已创建 {member.id}，继续指定下一点")
             return True
@@ -788,127 +834,142 @@ class ALUDIY_OT_draw_member(bpy.types.Operator):
             return False
 
     def modal(self, context, event):
-        if event.type == "MOUSEMOVE":
-            try:
-                point, snap_node_id = _point_from_event(context, event, self)
-                if point is not None:
-                    self._current_mm = point
-                    self._snap_node_id = snap_node_id
-                    self._cursor_error = ""
-            except GeometryError as exc:
-                self._cursor_error = str(exc)
-            lock_label = f" · {self._axis_lock} 轴锁定" if self._axis_lock else ""
-            hint = self._cursor_error or self._typed or "鼠标定位"
-            self._header(context, f"{self._work_plane} 平面{lock_label} · {hint}")
-            self._refresh_preview(context)
-            return {"RUNNING_MODAL"}
-
-        if event.value == "PRESS" and event.type in {"X", "Y", "Z"}:
-            self._axis_lock = None if self._axis_lock == event.type else event.type
-            try:
-                point, snap_node_id = _point_from_event(context, event, self)
-                if point is not None:
-                    self._current_mm = point
-                    self._snap_node_id = snap_node_id
-                    self._cursor_error = ""
-            except GeometryError as exc:
-                self._cursor_error = str(exc)
-            self._header(context)
-            self._refresh_preview(context)
-            return {"RUNNING_MODAL"}
-
-        if event.value == "PRESS" and event.type == "BACK_SPACE":
-            self._typed = self._typed[:-1]
-            self._refresh_preview(context)
-            return {"RUNNING_MODAL"}
-
-        if event.value == "PRESS" and event.unicode:
-            character = event.unicode
-            if character in "0123456789.+-*/()mMcC@< ":
-                if character == "@":
-                    self._axis_lock = None
-                self._typed += character
-                self._header(context, f"输入：{self._typed}")
-                self._refresh_preview(context)
-                return {"RUNNING_MODAL"}
-
-        if event.value == "PRESS" and event.type in {"RET", "NUMPAD_ENTER"}:
-            if self._start_mm is not None and self._current_mm is not None:
-                self._commit(context)
-            return {"RUNNING_MODAL"}
-
-        if event.value == "PRESS" and event.type == "LEFTMOUSE":
-            try:
-                point, snap_node_id = _point_from_event(context, event, self)
-            except GeometryError as exc:
-                set_status(context.scene, f"无法定位空间点：{exc}")
-                return {"RUNNING_MODAL"}
-            if point is None:
-                return {"RUNNING_MODAL"}
-            self._snap_node_id = snap_node_id
-            self._current_mm = point
-            if self._start_mm is None:
-                self._start_mm = self._current_mm
-                _update_preview(context.scene, self._start_mm, self._start_mm)
-                set_status(context.scene, "已确定起点，请指定终点或输入精确长度")
-            else:
-                self._commit(context)
-            context.area.tag_redraw()
-            return {"RUNNING_MODAL"}
-
-        if event.value == "PRESS" and event.type in {"RIGHTMOUSE", "ESC"}:
-            _remove_preview(context.scene)
+        global _ACTIVE_DRAW
+        if event.value == 'PRESS' and event.type in {'RIGHTMOUSE', 'ESC'}:
+            _remove_preview(self._scene)
             _remove_draw_feedback_safely(self)
             context.window.cursor_modal_restore()
             self._clear_header(context)
-            context.area.tag_redraw()
-            set_status(context.scene, f"连续画线结束，共创建 {self._committed_count} 根型材")
-            return {"FINISHED" if self._committed_count else "CANCELLED"}
-
-        return {"RUNNING_MODAL"}
+            _ACTIVE_DRAW = None
+            self._redraw_views(context)
+            set_status(self._scene, f'连续画线结束，共创建 {self._committed_count} 根；未确认段已取消')
+            return {'FINISHED' if self._committed_count else 'CANCELLED'}
+        if context.scene != self._scene:
+            self.cancel(context)
+            return {'CANCELLED'}
+        free = bool(event.ctrl)
+        if free != self._free:
+            self._free = free
+            if self._last_event is not None:
+                self._locate(context, self._last_event)
+        if event.type in {'LEFT_CTRL', 'RIGHT_CTRL'}:
+            return {'RUNNING_MODAL'}
+        if event.type == 'MIDDLEMOUSE':
+            self._navigating = event.value != 'RELEASE'
+            return {'PASS_THROUGH'}
+        if self._navigating or event.type in {'WHEELUPMOUSE','WHEELDOWNMOUSE','TRACKPADPAN','TRACKPADZOOM'} or event.alt:
+            return {'PASS_THROUGH'}
+        region = _window_region(context.area)
+        inside = (region is not None and context.area.as_pointer() == self._source_area_pointer
+                  and region.x <= event.mouse_x < region.x+region.width
+                  and region.y <= event.mouse_y < region.y+region.height)
+        if inside:
+            for overlay in context.area.regions:
+                if overlay.type in {'UI', 'TOOLS'} and overlay.width > 1 and overlay.height > 1:
+                    if overlay.x <= event.mouse_x < overlay.x+overlay.width and overlay.y <= event.mouse_y < overlay.y+overlay.height:
+                        inside = False
+        # Sidebar/header/other-view clicks never define engineering coordinates.
+        if not inside:
+            return {'RUNNING_MODAL'}
+        if event.type == 'MOUSEMOVE':
+            from types import SimpleNamespace
+            self._last_event = SimpleNamespace(mouse_x=event.mouse_x, mouse_y=event.mouse_y)
+            self._locate(context, event)
+            return {'RUNNING_MODAL'}
+        if event.value != 'PRESS':
+            return {'RUNNING_MODAL'}
+        if event.type == 'TAB':
+            if len(self._snap_options)>1:
+                self._snap_choice = (self._snap_choice + (-1 if event.shift else 1)) % len(self._snap_options)
+                self._locate(context, event)
+            return {'RUNNING_MODAL'}
+        if event.type in {"X", "Y", "Z"}:
+            plane = bool(event.shift)
+            self._axis_lock = None if (self._axis_lock == event.type and self._plane_lock == plane) else event.type
+            self._plane_lock = plane if self._axis_lock else False
+            self._locate(context, event)
+            self._refresh_preview(context)
+            return {'RUNNING_MODAL'}
+        if event.type == 'BACK_SPACE':
+            self._typed = self._typed[:-1]
+            self._locate(context, event)
+            self._refresh_preview(context)
+            return {'RUNNING_MODAL'}
+        if event.type in {'RET','NUMPAD_ENTER'}:
+            self._locate(context, event)
+            if self._start_mm is not None and self._current_mm is not None:
+                self._commit(context)
+                self._refresh_preview(context)
+            return {'RUNNING_MODAL'}
+        if event.type == 'LEFTMOUSE':
+            self._locate(context, event)
+            if self._current_mm is None or self._cursor_error:
+                return {'RUNNING_MODAL'}
+            if self._start_mm is None:
+                self._start_mm = self._current_mm
+                set_status(context.scene, '已确定起点；X / Y / Z 锁轴，输入精确长度，Ctrl 暂停吸附')
+            else:
+                self._commit(context)
+            self._refresh_preview(context)
+            return {'RUNNING_MODAL'}
+        if event.unicode and not event.ctrl:
+            char = event.unicode
+            if char in '0123456789.+-*/()mMcC@< ' and self._start_mm is not None:
+                if char == '@':
+                    self._axis_lock, self._plane_lock = None, False
+                self._typed += char
+                self._locate(context, event)
+                self._refresh_preview(context)
+                return {'RUNNING_MODAL'}
+        return {'RUNNING_MODAL'}
 
     def invoke(self, context, event):
-        self._start_mm = None
-        self._current_mm = None
-        self._typed = ""
+        global _ACTIVE_DRAW
+        if _ACTIVE_DRAW is not None:
+            self.report({'WARNING'}, '请先结束当前画线')
+            return {'CANCELLED'}
+        self._start_mm = self._current_mm = None
+        self._typed, self._cursor_error, self._input_error = '', '', ''
         self._committed_count = 0
-        self._snap_node_id = None
-        self._axis_lock = None
-        self._cursor_error = ""
+        self._snap_node_id = self._axis_lock = None
+        self._snap = self._display_snap = self._display_point = None
+        self._snap_options, self._choice_keys = (), ()
+        self._snap_choice = 0
+        self._plane_lock, self._free, self._navigating = False, bool(event.ctrl), False
+        self._last_event = None
+        self._scene = context.scene
+        self._source_window_pointer = context.window.as_pointer()
         self._work_plane = settings(context.scene).work_plane
         try:
-            self._workplane_offset_mm = parse_distance_mm(
-                settings(context.scene).workplane_offset_input
-            )
+            self._workplane_offset_mm = parse_distance_mm(settings(context.scene).workplane_offset_input)
         except InputParseError as exc:
-            self.report({"ERROR"}, f"工作平面偏移无效：{exc}")
-            return {"CANCELLED"}
+            self.report({'ERROR'}, f'工作平面偏移无效：{exc}')
+            return {'CANCELLED'}
         window_region = _window_region(context.area)
         if window_region is None:
-            self.report({"ERROR"}, "当前三维视图没有可用的 WINDOW 区域")
-            return {"CANCELLED"}
+            return {'CANCELLED'}
         self._source_area_pointer = context.area.as_pointer()
         self._source_region_pointer = window_region.as_pointer()
         _remove_preview(context.scene)
-        context.window.cursor_modal_set("CROSSHAIR")
+        context.window.cursor_modal_set('CROSSHAIR')
         try:
             _overlay_module().add_draw_feedback(self)
         except Exception as exc:
-            set_status(
-                context.scene,
-                f"画线工具已启动；动态绘制反馈不可用：{exc}",
-            )
+            set_status(context.scene, f'画线工具已启动；动态反馈不可用：{exc}')
         self._header(context)
+        _ACTIVE_DRAW = self
         context.window_manager.modal_handler_add(self)
         context.area.tag_redraw()
-        return {"RUNNING_MODAL"}
+        return {'RUNNING_MODAL'}
 
     def cancel(self, context):
-        _remove_preview(context.scene)
+        global _ACTIVE_DRAW
+        _remove_preview(getattr(self, '_scene', context.scene))
         _remove_draw_feedback_safely(self)
         context.window.cursor_modal_restore()
         self._clear_header(context)
-        context.area.tag_redraw()
+        _ACTIVE_DRAW = None
+        self._redraw_views(context)
 
 
 class ALUDIY_OT_export_project(bpy.types.Operator, ExportHelper):
