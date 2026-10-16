@@ -1,3 +1,7 @@
+## 最新 Preview：0.1.13-alpha
+
+双视窗创建/切换与投影同步修复。原 Layout 保留、自动进入 ALU DIY、重复设置不新增工作区；旧 Layout.001 不自动删除。详见 `docs/acceptance/v0.1.13-alpha.md`。
+
 ## Preview 0.1.12-alpha
 
 N 面板新增“型材规格与截面朝向”。多选批量换型、±90°和绝对角度、双窗截面与稳定槽位检查。设计轴线/节点/关联保持。详见 `docs/acceptance/v0.1.12-alpha.md`。

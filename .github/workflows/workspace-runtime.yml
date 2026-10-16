@@ -1,0 +1,67 @@
+name: Workspace Synchronization Runtime Verification
+on:
+  push:
+    branches: ["fix/v0.1.13-workspace-sync"]
+    paths: [".github/workflows/workspace-runtime.yml", "src/**", "extension/**", "tools/**", "tests/**"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: workspace-runtime-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Tests compilation and reproducible package
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          python -m pip install pytest
+          python tools/sync_core_into_extension.py
+          pytest -q | tee evidence/pytest.log
+          python -m compileall -q src extension tools
+          python tools/build_extension.py
+          P="$(python tools/release_meta.py package-name)"
+          cp "dist/$P" "$RUNNER_TEMP/first.zip"
+          python tools/build_extension.py
+          cmp "$RUNNER_TEMP/first.zip" "dist/$P"
+          cp "dist/$P" evidence/
+      - name: Prepare verified official Blender 5.2.2 and X11
+        run: |
+          set -euo pipefail
+          BASE=https://download.blender.org/release/Blender5.2
+          A=blender-5.2.2-linux-x64.tar.xz
+          curl -fL --retry 3 "$BASE/$A" -o "$RUNNER_TEMP/$A"
+          curl -fL --retry 3 "$BASE/blender-5.2.2.sha256" -o "$RUNNER_TEMP/official.sha256"
+          (cd "$RUNNER_TEMP"; grep -F "$A" official.sha256 | sha256sum --check)
+          tar -xf "$RUNNER_TEMP/$A" -C "$RUNNER_TEMP"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb xauth libxtst6 ffmpeg
+      - name: Validate package and retain all existing editing regressions
+        run: |
+          set -euo pipefail
+          B="$RUNNER_TEMP/blender-5.2.2-linux-x64/blender"
+          P="$(python tools/release_meta.py package-name)"
+          "$B" --command extension validate "dist/$P"
+          bash tools/verify_profile_orientation.sh "$B" "$GITHUB_WORKSPACE/evidence/retained" | tee evidence/retained-summary.log
+      - name: Real first entry repeated setup projection modes and fresh GUI reopens
+        run: |
+          set -euo pipefail
+          B="$RUNNER_TEMP/blender-5.2.2-linux-x64/blender"
+          bash tools/verify_workspace_sync.sh "$B" "$GITHUB_WORKSPACE/evidence/workspace" | tee evidence/workspace-summary.log
+      - name: Record immutable tested source
+        run: |
+          git rev-parse HEAD > evidence/source-sha.txt
+          git archive HEAD | xz > evidence/source.tar.xz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aludiy-workspace-sync-evidence
+          path: evidence/
+          retention-days: 14
