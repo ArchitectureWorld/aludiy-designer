@@ -307,6 +307,8 @@ def _apply_node_positions(
     project: Project,
     replacements: dict[str, Vector3],
 ) -> GeometryChangeResult:
+    from .associations import propagate_positions
+    replacements = propagate_positions(project, replacements)
     moved = {
         node_id: position
         for node_id, position in replacements.items()

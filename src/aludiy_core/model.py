@@ -340,6 +340,7 @@ class Project:
     schema_version: str = "0.1.0"
     nodes: dict[str, Node] = field(default_factory=dict)
     members: dict[str, Member] = field(default_factory=dict)
+    associations: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.project_id = _non_empty(self.project_id, "project.project_id")
@@ -395,6 +396,10 @@ class Project:
         for node_id in removed_node_ids:
             self.nodes.pop(node_id, None)
 
+        self.associations = {key: r for key, r in self.associations.items()
+                             if not (r.host_member_id in normalized
+                                     or r.follower_node_id in removed_node_ids
+                                     or set(r.node_ids).intersection(removed_node_ids))}
         self.validate()
         return MemberRemovalResult(
             removed_member_ids=normalized,
@@ -402,6 +407,10 @@ class Project:
         )
 
     def validate(self) -> None:
+        if self.schema_version not in {"0.1.0", "0.2.0"}:
+            raise ValidationError("Unsupported project schema; use a compatible extension")
+        from .associations import validate_associations
+        validate_associations(self)
         seen = set(self.nodes)
         duplicate = seen.intersection(self.members)
         if duplicate:
@@ -415,13 +424,16 @@ class Project:
 
     def to_dict(self) -> dict[str, Any]:
         self.validate()
-        return {
+        payload = {
             "schema_version": self.schema_version,
             "project_id": self.project_id,
             "catalog_revision": self.catalog_revision,
             "nodes": [self.nodes[key].to_dict() for key in sorted(self.nodes)],
             "members": [self.members[key].to_dict() for key in sorted(self.members)],
         }
+        if self.associations or self.schema_version == "0.2.0":
+            payload["associations"] = [self.associations[k].to_dict() for k in sorted(self.associations)]
+        return payload
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "Project":
@@ -434,6 +446,12 @@ class Project:
             project.add_node(Node.from_dict(item))
         for item in payload.get("members", []):
             project.add_member(Member.from_dict(item))
+        from .associations import Association
+        for item in payload.get("associations", []):
+            relation = Association.from_dict(item)
+            if relation.id in project.associations:
+                raise DuplicateIdError(f"duplicate association id {relation.id}")
+            project.associations[relation.id] = relation
         project.validate()
         return project
 

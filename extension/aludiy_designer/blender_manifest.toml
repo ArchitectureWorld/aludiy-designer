@@ -1,6 +1,6 @@
 schema_version = "1.0.0"
 id = "aludiy_designer"
-version = "0.1.9"
+version = "0.1.10"
 name = "AluDIY Designer"
 tagline = "Line-driven aluminum extrusion design with linked 3D feedback"
 maintainer = "ArchitectureWorld"

@@ -769,36 +769,14 @@ class ALUDIY_OT_draw_member(bpy.types.Operator):
             end_mm = self._resolved_end()
             if end_mm is None or self._start_mm is None:
                 return False
-            project = get_project(context.scene)
-            tolerance = settings(context.scene).snap_tolerance_mm
-            start_node = _nearest_node(project, self._start_mm, tolerance)
-            end_node = _nearest_node(project, end_mm, tolerance)
-            if start_node is None:
-                start_node = Node(
-                    id=_next_id("N", project.nodes),
-                    position_mm=tuple(self._start_mm),
-                )
-                project.add_node(start_node)
-            if end_node is None:
-                end_node = Node(
-                    id=_next_id("N", project.nodes),
-                    position_mm=tuple(end_mm),
-                )
-                project.add_node(end_node)
-            if start_node.id == end_node.id:
-                raise ValidationError("起点与终点吸附到了同一个节点")
-            member = Member(
-                id=_next_id("M", project.members),
-                start_node_id=start_node.id,
-                end_node_id=end_node.id,
-                profile_type_id=_selected_profile(context.scene),
-            )
-            project.add_member(member)
-            set_project(context.scene, project)
-            scene_adapter.rebuild_scene(context.scene, project, get_catalog())
-            scene_adapter.select_entity(context.scene, context.view_layer, member.id)
-            self._start_mm = end_node.position_mm
-            self._current_mm = end_node.position_mm
+            from .vendor.aludiy_core.associations import append_independent_member
+            original = get_project(context.scene)
+            project, member_id = append_independent_member(original, self._start_mm, end_mm,
+                                                           _selected_profile(context.scene))
+            _commit_project_update(context, original, project, selected_entity_id=member_id)
+            member = project.members[member_id]
+            self._start_mm = project.nodes[member.end_node_id].position_mm
+            self._current_mm = self._start_mm
             self._typed = ""
             self._axis_lock = None
             self._committed_count += 1

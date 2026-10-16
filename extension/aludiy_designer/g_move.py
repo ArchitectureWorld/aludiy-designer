@@ -14,10 +14,11 @@ from mathutils import Matrix, Vector
 
 from . import runtime, scene_adapter
 from .vendor.aludiy_core import Project, parse_distance_mm
+from .vendor.aludiy_core.associations import exact_snap_delta, create_associations, remove_associations
 from .vendor.aludiy_core.geometry import derive_member_mesh
 from .vendor.aludiy_core.movement import movement_node_ids, preview_move
 from .vendor.aludiy_core.errors import ValidationError
-from .vendor.aludiy_core.snapping import node_candidates, ground_candidate, preview_reconnect
+from .vendor.aludiy_core.snapping import node_candidates, ground_candidate, preview_reconnect, member_candidates
 
 _ACTIVE = None
 _KEYMAPS = []
@@ -221,6 +222,7 @@ class ALUDIY_OT_pick_endpoint(bpy.types.Operator):
                 and _ACTIVE is None and bool(engineering_objects(context)))
 
     def invoke(self, context, event):
+        if event.shift or event.ctrl or event.alt: return {'PASS_THROUGH'}
         region = _window_region(context.area)
         cursor = Vector((event.mouse_x-region.x,event.mouse_y-region.y))
         candidates = [(float((p-cursor).length),side,nid) for side,nid,p in projected_handles(context) if p is not None]
@@ -252,6 +254,7 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
     bl_options = {'REGISTER','UNDO','BLOCKING'}
     delta_mm: FloatVectorProperty(name='位移 (mm)', size=3, default=(0,0,0))
     detach: BoolProperty(name='断开选中杆端', default=False)
+    delta_json: StringProperty(default='', options={'HIDDEN','SKIP_SAVE'})
     target_json: StringProperty(default='', options={'HIDDEN'})
     snap_target_node_id: StringProperty(default='', options={'HIDDEN'})
     snap_anchor_node_id: StringProperty(default='', options={'HIDDEN'})
@@ -266,12 +269,13 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
         try:
             original = runtime.get_project(context.scene)
             spec = json.loads(self.target_json) if self.target_json else target_spec(context)
+            delta = tuple(json.loads(self.delta_json)) if self.delta_json else tuple(self.delta_mm)
             if self.snap_target_node_id:
                 anchor = self.snap_anchor_node_id or movement_node_ids(original, **spec)[0]
-                result = preview_reconnect(original, self.delta_mm, detach=self.detach,
+                result = preview_reconnect(original, delta, detach=self.detach,
                     anchor_node_id=anchor, target_node_id=self.snap_target_node_id, **spec)
             else:
-                result = preview_move(original,self.delta_mm,detach=self.detach,**spec)
+                result = preview_move(original,delta,detach=self.detach,**spec)
             if not result.moved_node_ids:
                 runtime.settings(context.scene).move_connection_mode='KEEP'
                 runtime.set_status(context.scene,'位置与连接未改变')
@@ -322,6 +326,8 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
             self._origin = Vector(self._original.nodes[self._anchor_id].position_mm)
             self.snap_anchor_node_id = self._anchor_id
             self.snap_target_node_id = ''
+            self.delta_json = ''
+            self._exact_delta = (0.0,0.0,0.0)
 
             self._start_mouse = (event.mouse_x-self._region.x,event.mouse_y-self._region.y)
             # N-panel button activation waits for a cursor location in the viewport.
@@ -410,19 +416,29 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
             if any(m.id!=owner and self._anchor_id in (m.start_node_id,m.end_node_id)
                    for m in self._original.members.values()):
                 excluded.discard(self._anchor_id)
-        exact = tuple(self._origin+delta) if self._typed else None
+        exact = tuple(self._original.nodes[self._anchor_id].position_mm[i]+delta[i] for i in range(3)) if self._typed else None
         cursor = self._project_point(exact) if exact is not None else self._mouse
         if cursor is None:
             self._snap_options = ()
             return delta
-        options = node_candidates(self._original,origin_mm=tuple(self._origin),
+        options = node_candidates(self._original,origin_mm=self._original.nodes[self._anchor_id].position_mm,
             cursor_px=cursor,project_point=self._project_point,excluded_node_ids=excluded,
             radius_px=runtime.settings(self._scene).snap_pixel_radius,
             axis=self._axis,plane_lock=self._plane_lock,exact_position_mm=exact)
+        if not options and not self.connect_only:
+            ro,rd=self._ray(self._mouse)
+            excluded_members={m.id for m in self._original.members.values()
+                              if m.start_node_id in self._target_ids or m.end_node_id in self._target_ids}
+            options=member_candidates(self._original,
+                origin_mm=self._original.nodes[self._anchor_id].position_mm,
+                cursor_px=cursor,project_point=self._project_point,
+                ray_origin_mm=tuple(ro),ray_direction=tuple(rd),excluded_member_ids=excluded_members,
+                radius_px=runtime.settings(self._scene).snap_pixel_radius,axis=self._axis,
+                plane_lock=self._plane_lock,exact_position_mm=exact)
         # Endpoints win over the ground. Midpoints/slots are intentionally not
         # advertised as connected until persistent host relationships exist.
         if not options and self._ground is not None and not self._typed and not self.connect_only:
-            ground = ground_candidate(tuple(self._origin),tuple(self._origin+delta),
+            ground = ground_candidate(self._original.nodes[self._anchor_id].position_mm,tuple(self._original.nodes[self._anchor_id].position_mm[i]+delta[i] for i in range(3)),
                 ground_mm=self._ground,project_point=self._project_point,
                 radius_px=runtime.settings(self._scene).snap_pixel_radius,
                 axis=self._axis,plane_lock=self._plane_lock)
@@ -435,7 +451,7 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
         if options:
             self._snap = options[self._snap_choice % len(options)]
             # Exact typed displacement is never silently rounded.
-            return delta if self._typed else Vector(self._snap.position_mm)-self._origin
+            return delta if self._typed else exact_snap_delta(self._original.nodes[self._anchor_id].position_mm,self._snap.position_mm)
         return delta
 
     def _snap_label(self):
@@ -446,9 +462,11 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
         if self._snap is not None:
             suffix = f' · Tab 切换 {self._snap_choice % len(self._snap_options)+1}/{len(self._snap_options)}' if len(self._snap_options)>1 else ''
             if self._snap.kind=='NODE':
-                return f'端点 {self._snap.node_id} · 确认后连接'+suffix
+                return f'端点 {self._snap.node_id} · 仅定位，不自动关联'+suffix
+            if self._snap.member_id:
+                return f'{"中点" if self._snap.kind=="MIDPOINT" else "杆身轴线"} {self._snap.member_id} · 仅定位'+suffix
             return f'地面 Z={self._ground:g} mm · 仅定位，不建立约束'
-        return '吸附开启 · 靠近端点可连接；按住 Ctrl 自由移动'
+        return '吸附仅定位 · 端点 / 杆身 / 地面 · Ctrl 自由移动'
 
     def _update(self, context):
         if self._waiting: return
@@ -459,7 +477,7 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
                     direction=Vector(tuple(1 if i=='XYZ'.index(self._axis) else 0 for i in range(3)))
                 else:
                     direction=self._last_direction
-                delta=direction*distance
+                delta=tuple(float(v)*distance for v in direction)
             elif self.connect_only:
                 delta=Vector((0,0,0))
             else:
@@ -471,7 +489,7 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
             delta=self._snap_delta(context,delta)
             if self.connect_only and (self._snap is None or self._snap.kind!='NODE'):
                 raise ValidationError('点选一个工程端点作为连接目标（Tab 切换重合候选）')
-            if self._snap is not None and self._snap.kind=='NODE':
+            if self.connect_only and self._snap is not None and self._snap.kind=='NODE':
                 candidate=preview_reconnect(self._original,delta,anchor_node_id=self._anchor_id,
                     target_node_id=self._snap.node_id,detach=self.detach,**self._spec)
             else:
@@ -479,6 +497,7 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
             self._affected.update(candidate.affected_member_ids)
             update_preview_geometry(self._scene,candidate.project,self._affected)
             self._candidate, self._delta = candidate, Vector(delta)
+            self._exact_delta = tuple(delta)
             self._error=''
         except Exception as exc:
             self._error=str(exc)
@@ -553,7 +572,8 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
             if self._error or self._candidate is None: return {'RUNNING_MODAL'}
             # Discard visual preview before executing one undoable engineering edit.
             self.delta_mm=tuple(self._delta)
-            self.snap_target_node_id = (self._snap.node_id or '') if self._snap is not None and not self._free else ''
+            self.delta_json=json.dumps(self._exact_delta)
+            self.snap_target_node_id = (self._snap.node_id or '') if self.connect_only and self._snap is not None and not self._free else ''
             self._restore_and_close(context)
             return self.execute(context)
         if event.type=='BACK_SPACE':
@@ -603,6 +623,7 @@ def _draw_handles():
         from . import viewport_overlay as ov
         import gpu
         gpu.state.blend_set('ALPHA')
+        _draw_selection(ctx,ov)
         handles=projected_handles(ctx)
         cursor=Vector(_MOUSE.get(ctx.area.as_pointer(),(-10000,-10000)))
         ep=endpoint_context(ctx)
@@ -620,7 +641,7 @@ def _draw_handles():
                 ov._text(point.x+16,point.y+16,label,size=14)
         if _ACTIVE is not None and _ACTIVE._scene==ctx.scene:
             op=_ACTIVE
-            mode='断开选中杆端' if op.detach else '保持连接'
+            mode='解除杆端关联' if op.detach else '吸附仅定位'
             axis=(('排除 ' if op._plane_lock else '')+op._axis) if op._axis else '屏幕平面'
             from . import view_sync
             if ctx.area == op._area or view_sync.is_line_view_context(ctx):
@@ -640,11 +661,13 @@ def _draw_handles():
                     text=op._snap_label() if not op._error else '不可连接：'+op._error
                     ov._text(sp.x+15,sp.y-24,text,size=12,color=color)
             candidate=op._candidate.project if op._candidate else op._original
+            selected_mids,selected_nodes=selection_summary(ctx)
             for mid in op._affected:
+                if mid in selected_mids: continue
                 m=candidate.members[mid]
                 pts=[ov._project(candidate.nodes[n].position_mm) for n in (m.start_node_id,m.end_node_id)]
                 if all(p is not None for p in pts):
-                    ov._polyline([(p.x,p.y) for p in pts],color=(.2,.8,1,.65),width=2)
+                    _dashed(ov,pts[0],pts[1],(.3,.8,1,.85))
     except Exception as exc:
         # Never remove core controls because a GPU overlay is unavailable.
         print(f'AluDIY endpoint overlay: {exc}')
@@ -654,6 +677,117 @@ def _draw_handles():
             gpu.state.blend_set('NONE')
         except Exception: pass
 
+
+
+def selection_summary(context):
+    mids,nids=set(),set()
+    for obj in engineering_objects(context):
+        eid=runtime.entity_id_from_object(obj)
+        if obj.get('aludiy_entity_type')=='NODE': nids.add(eid)
+        else: mids.add(eid)
+    return mids,nids
+
+
+def _dashed(ov,a,b,color):
+    length=(b-a).length
+    steps=max(1,int(length/12))
+    for i in range(steps):
+        p=a.lerp(b,i/steps);q=a.lerp(b,min(1,(i+.55)/steps))
+        ov._polyline([tuple(p),tuple(q)],color=color,width=2.0)
+
+
+def _draw_selection(context,ov):
+    mids,nids=selection_summary(context)
+    p=display_project(context.scene)
+    active=runtime.entity_id_from_object(context.view_layer.objects.active)
+    for mid in mids:
+        if mid not in p.members:continue
+        m=p.members[mid];start=ov._project(p.nodes[m.start_node_id].position_mm);end=ov._project(p.nodes[m.end_node_id].position_mm)
+        if start is None or end is None:continue
+        pts=[tuple(start),tuple(end)]
+        ov._polyline(pts,color=(1,1,1,1) if mid==active else (.2,.8,1,1),width=8 if mid==active else 6)
+        ov._polyline(pts,colors=[ov.START_COLOR,ov.END_COLOR],width=3)
+        center=(start+end)*.5;ov._text(center.x+6,center.y+8,mid,size=12)
+    for nid in nids:
+        if nid not in p.nodes:continue
+        pt=ov._project(p.nodes[nid].position_mm)
+        if pt is not None:
+            _disc(pt,10,(1,1,1,1) if nid==active else (.2,.8,1,1))
+            _disc(pt,6,(.08,.18,.22,1))
+    # Mark manual and legacy relationships separately from selection.
+    relation_points=set()
+    for r in p.associations.values():
+        relation_points.update(r.node_ids if r.kind=='COINCIDENT' else (r.follower_node_id,))
+    refs={}
+    for m in p.members.values():
+        for n in (m.start_node_id,m.end_node_id):refs[n]=refs.get(n,0)+1
+    relation_points.update(n for n,count in refs.items() if count>1)
+    for nid in relation_points:
+        pt=ov._project(p.nodes[nid].position_mm)
+        if pt is not None:
+            ov.draw_snap_marker((pt.x,pt.y),color=(1,.8,.25,1))
+    if mids or nids:
+        y=35;x=72 if context.space_data.show_region_toolbar else 14
+        ov._filled_rect(x,y, min(580,context.region.width-x-12),48,(.035,.045,.065,.94))
+        ov._text(x+10,y+29,f'已选 {len(mids)} 根型材 / {len(nids)} 个节点 · 当前 {active or "—"}',size=13)
+        influenced=0
+        if _ACTIVE and _ACTIVE._scene==context.scene: influenced=len(set(_ACTIVE._affected)-mids)
+        ov._text(x+10,y+9,f'实线：选中 · 虚线：关联影响 {influenced} 根 · 菱形：已有关系',size=11)
+
+
+class ALUDIY_OT_create_associations(bpy.types.Operator):
+    bl_idname='aludiy.create_associations'
+    bl_label='创建关联'
+    bl_description='多选已相接杆件或重合节点，创建显式端点/杆身轴线关系；不移动构件'
+    bl_options={'REGISTER','UNDO'}
+    @classmethod
+    def poll(cls,context): return ALUDIY_OT_move_engineering.poll(context)
+    def execute(self,context):
+        try:
+            spec=target_spec(context)
+            if spec.get('endpoint'): raise ValidationError('请 Shift 多选杆件或节点后创建关联')
+            original=runtime.get_project(context.scene)
+            result=create_associations(original,**spec)
+            if not result.changed_count:
+                runtime.set_status(context.scene,'这些关联已存在');return {'CANCELLED'}
+            _commit_relations(context,original,result.project,spec)
+            runtime.set_status(context.scene,f'已创建 {result.changed_count} 处关联；杆身按相对位置跟随主杆')
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'WARNING'},str(exc));runtime.set_status(context.scene,str(exc));return {'CANCELLED'}
+
+
+class ALUDIY_OT_remove_associations(bpy.types.Operator):
+    bl_idname='aludiy.remove_associations'
+    bl_label='解除关联'
+    bl_description='解除所选构件或节点相关关系，保留当前几何位置'
+    bl_options={'REGISTER','UNDO'}
+    @classmethod
+    def poll(cls,context): return ALUDIY_OT_move_engineering.poll(context)
+    def execute(self,context):
+        try:
+            spec=target_spec(context);original=runtime.get_project(context.scene)
+            result=remove_associations(original,**spec)
+            if not result.changed_count:
+                runtime.set_status(context.scene,'所选对象没有待解除关联');return {'CANCELLED'}
+            _commit_relations(context,original,result.project,spec)
+            runtime.set_status(context.scene,f'已解除 {result.changed_count} 处关联；位置不变')
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'WARNING'},str(exc));runtime.set_status(context.scene,str(exc));return {'CANCELLED'}
+
+
+def _commit_relations(context,original,project,spec):
+    from .operators import _commit_project_update
+    mids=set(spec.get('member_ids',()));nids=set(spec.get('node_ids',()))
+    selected=next(iter(mids or nids),None)
+    if spec.get('endpoint'):
+        owner,side=spec['endpoint'];selected=owner
+    _commit_project_update(context,original,project,selected_entity_id=selected)
+    for obj in context.view_layer.objects:
+        if obj.get('aludiy_managed'):obj.select_set(runtime.entity_id_from_object(obj) in mids|nids)
+    if spec.get('endpoint'):_select_endpoint(context,owner,side)
+    _redraw()
 
 def register_services():
     global _DRAW_HANDLE
@@ -685,4 +819,4 @@ def unregister_services():
         _DRAW_HANDLE=None
 
 
-CLASSES=(ALUDIY_OT_select_endpoint,ALUDIY_OT_pick_endpoint,ALUDIY_OT_hover_endpoint,ALUDIY_OT_move_engineering)
+CLASSES=(ALUDIY_OT_create_associations,ALUDIY_OT_remove_associations,ALUDIY_OT_select_endpoint,ALUDIY_OT_pick_endpoint,ALUDIY_OT_hover_endpoint,ALUDIY_OT_move_engineering)
