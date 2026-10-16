@@ -37,6 +37,9 @@ jobs:
       - name: Validate release tag
         run: python tools/release_meta.py validate-tag "${GITHUB_REF_NAME}"
 
+      - name: Prepare generated runtime resources
+        run: python tools/sync_core_into_extension.py
+
       - name: Run tests
         run: pytest -q
 

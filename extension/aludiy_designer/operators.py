@@ -4,7 +4,7 @@ import math
 from pathlib import Path
 
 import bpy
-from bpy.props import StringProperty
+from bpy.props import EnumProperty, StringProperty
 from bpy_extras import view3d_utils
 from bpy_extras.io_utils import ExportHelper, ImportHelper
 from mathutils import Vector
@@ -13,6 +13,7 @@ from . import runtime, scene_adapter, view_sync
 from .runtime import (
     HELPER_COLLECTION,
     active_member_id,
+    active_node_id,
     empty_project,
     get_catalog,
     get_project,
@@ -26,6 +27,7 @@ from .vendor.aludiy_core import (
     InputParseError,
     Member,
     Node,
+    Project,
     ValidationError,
     catalog_revision_warning,
     create_sample_frame,
@@ -33,7 +35,9 @@ from .vendor.aludiy_core import (
     parse_distance_mm,
     parse_length_mm,
     parse_polar,
+    move_node,
     resize_member,
+    translate_member,
     save_project,
     write_cutlist_csv,
 )
@@ -71,6 +75,39 @@ def _first_profile_id() -> str:
 def _selected_profile(scene: bpy.types.Scene) -> str:
     value = settings(scene).active_profile_id
     return value or _first_profile_id()
+
+
+def _editable_project(scene: bpy.types.Scene) -> tuple[Project, Project]:
+    """Return the persisted project and an isolated candidate for editing."""
+
+    project = get_project(scene)
+    return project, Project.from_dict(project.to_dict())
+
+
+def _commit_project_update(
+    context: bpy.types.Context,
+    original_project: Project,
+    updated_project: Project,
+    *,
+    selected_entity_id: str,
+) -> None:
+    """Atomically rebuild caches and persist a candidate engineering project."""
+
+    catalog = get_catalog()
+    try:
+        scene_adapter.rebuild_scene(context.scene, updated_project, catalog)
+        set_project(context.scene, updated_project)
+    except Exception:
+        try:
+            scene_adapter.rebuild_scene(context.scene, original_project, catalog)
+            set_project(context.scene, original_project)
+        except Exception as restore_exc:
+            print(f"AluDIY precise-edit restore warning: {restore_exc}")
+        raise
+    try:
+        scene_adapter.select_entity(context.scene, context.view_layer, selected_entity_id)
+    except Exception as select_exc:
+        print(f"AluDIY precise-edit selection warning: {select_exc}")
 
 
 def _next_id(prefix: str, values) -> str:
@@ -358,6 +395,198 @@ class ALUDIY_OT_rebuild_scene(bpy.types.Operator):
         return {"FINISHED"}
 
 
+class _CoordinateDialogMixin:
+    def _set_position(self, position_mm) -> None:
+        self.x_input = f"{position_mm[0]:g}"
+        self.y_input = f"{position_mm[1]:g}"
+        self.z_input = f"{position_mm[2]:g}"
+
+    def _position(self):
+        return (
+            parse_distance_mm(self.x_input),
+            parse_distance_mm(self.y_input),
+            parse_distance_mm(self.z_input),
+        )
+
+    def draw(self, _context):
+        layout = self.layout
+        row = layout.row(align=True)
+        row.prop(self, "x_input")
+        row.prop(self, "y_input")
+        row.prop(self, "z_input")
+
+
+class ALUDIY_OT_edit_active_node(_CoordinateDialogMixin, bpy.types.Operator):
+    bl_idname = "aludiy.edit_active_node"
+    bl_label = "编辑节点坐标"
+    bl_description = "用精确 XYZ 坐标移动工程节点，并更新全部相邻型材"
+    bl_options = {"REGISTER", "UNDO"}
+
+    x_input: StringProperty(name="X", default="0")
+    y_input: StringProperty(name="Y", default="0")
+    z_input: StringProperty(name="Z", default="0")
+
+    @classmethod
+    def poll(cls, context):
+        return active_node_id(context) is not None
+
+    def invoke(self, context, _event):
+        node_id = active_node_id(context)
+        if node_id is None:
+            return {"CANCELLED"}
+        self._set_position(get_project(context.scene).nodes[node_id].position_mm)
+        return context.window_manager.invoke_props_dialog(self, width=480)
+
+    def execute(self, context):
+        node_id = active_node_id(context)
+        if node_id is None:
+            self.report({"WARNING"}, "请先选择工程节点")
+            return {"CANCELLED"}
+        try:
+            position = self._position()
+            original_project, project = _editable_project(context.scene)
+            result = move_node(project, node_id, position)
+            _commit_project_update(
+                context,
+                original_project,
+                project,
+                selected_entity_id=node_id,
+            )
+        except Exception as exc:
+            self.report({"ERROR"}, str(exc))
+            set_status(context.scene, f"节点修改失败：{exc}")
+            return {"CANCELLED"}
+        set_status(
+            context.scene,
+            f"{node_id} 已移动；更新 {len(result.affected_member_ids)} 根关联型材",
+        )
+        return {"FINISHED"}
+
+
+class ALUDIY_OT_edit_member_endpoint(_CoordinateDialogMixin, bpy.types.Operator):
+    bl_idname = "aludiy.edit_member_endpoint"
+    bl_label = "编辑型材端点"
+    bl_description = "精确修改型材起点或终点；共享节点会驱动相邻型材更新"
+    bl_options = {"REGISTER", "UNDO"}
+
+    x_input: StringProperty(name="X", default="0")
+    y_input: StringProperty(name="Y", default="0")
+    z_input: StringProperty(name="Z", default="0")
+
+    endpoint: EnumProperty(
+        name="端点",
+        items=(
+            ("START", "起点", "编辑 Member 的起始节点"),
+            ("END", "终点", "编辑 Member 的终止节点"),
+        ),
+        default="START",
+    )
+
+    @classmethod
+    def poll(cls, context):
+        return active_member_id(context) is not None
+
+    def _node_id(self, context):
+        member_id = active_member_id(context)
+        if member_id is None:
+            return None
+        member = get_project(context.scene).members[member_id]
+        return member.start_node_id if self.endpoint == "START" else member.end_node_id
+
+    def invoke(self, context, _event):
+        node_id = self._node_id(context)
+        if node_id is None:
+            return {"CANCELLED"}
+        self._set_position(get_project(context.scene).nodes[node_id].position_mm)
+        return context.window_manager.invoke_props_dialog(self, width=480)
+
+    def draw(self, context):
+        self.layout.prop(self, "endpoint", expand=True)
+        _CoordinateDialogMixin.draw(self, context)
+
+    def execute(self, context):
+        member_id = active_member_id(context)
+        if member_id is None:
+            self.report({"WARNING"}, "请先选择型材轴线或实体")
+            return {"CANCELLED"}
+        try:
+            original_project, project = _editable_project(context.scene)
+            member = project.members[member_id]
+            node_id = member.start_node_id if self.endpoint == "START" else member.end_node_id
+            result = move_node(project, node_id, self._position())
+            _commit_project_update(
+                context,
+                original_project,
+                project,
+                selected_entity_id=member_id,
+            )
+        except Exception as exc:
+            self.report({"ERROR"}, str(exc))
+            set_status(context.scene, f"端点修改失败：{exc}")
+            return {"CANCELLED"}
+        label = "起点" if self.endpoint == "START" else "终点"
+        set_status(
+            context.scene,
+            f"{member_id} {label}已更新；影响 {len(result.affected_member_ids)} 根型材",
+        )
+        return {"FINISHED"}
+
+
+class ALUDIY_OT_translate_active_member(bpy.types.Operator):
+    bl_idname = "aludiy.translate_active_member"
+    bl_label = "精确平移型材"
+    bl_description = "按 XYZ 增量平移型材的两个端点，并传播共享节点关系"
+    bl_options = {"REGISTER", "UNDO"}
+
+    x_input: StringProperty(name="ΔX", default="0")
+    y_input: StringProperty(name="ΔY", default="0")
+    z_input: StringProperty(name="ΔZ", default="0")
+
+    @classmethod
+    def poll(cls, context):
+        return active_member_id(context) is not None
+
+    def invoke(self, context, _event):
+        self.x_input = self.y_input = self.z_input = "0"
+        return context.window_manager.invoke_props_dialog(self, width=480)
+
+    def draw(self, _context):
+        row = self.layout.row(align=True)
+        row.prop(self, "x_input")
+        row.prop(self, "y_input")
+        row.prop(self, "z_input")
+
+    def execute(self, context):
+        member_id = active_member_id(context)
+        if member_id is None:
+            self.report({"WARNING"}, "请先选择型材轴线或实体")
+            return {"CANCELLED"}
+        try:
+            delta = (
+                parse_distance_mm(self.x_input),
+                parse_distance_mm(self.y_input),
+                parse_distance_mm(self.z_input),
+            )
+            original_project, project = _editable_project(context.scene)
+            result = translate_member(project, member_id, delta)
+            _commit_project_update(
+                context,
+                original_project,
+                project,
+                selected_entity_id=member_id,
+            )
+        except Exception as exc:
+            self.report({"ERROR"}, str(exc))
+            set_status(context.scene, f"型材平移失败：{exc}")
+            return {"CANCELLED"}
+        set_status(
+            context.scene,
+            f"{member_id} 已平移 Δ({delta[0]:g}, {delta[1]:g}, {delta[2]:g}) mm；"
+            f"影响 {len(result.affected_member_ids)} 根型材",
+        )
+        return {"FINISHED"}
+
+
 class ALUDIY_OT_resize_active_member(bpy.types.Operator):
     bl_idname = "aludiy.resize_active_member"
     bl_label = "按精确长度调整型材"
@@ -371,16 +600,19 @@ class ALUDIY_OT_resize_active_member(bpy.types.Operator):
         scene_settings = settings(context.scene)
         try:
             length = parse_length_mm(scene_settings.length_input)
-            project = get_project(context.scene)
+            original_project, project = _editable_project(context.scene)
             resize_member(
                 project,
                 member_id,
                 length,
                 anchor=scene_settings.resize_anchor,
             )
-            set_project(context.scene, project)
-            scene_adapter.rebuild_scene(context.scene, project, get_catalog())
-            scene_adapter.select_entity(context.scene, context.view_layer, member_id)
+            _commit_project_update(
+                context,
+                original_project,
+                project,
+                selected_entity_id=member_id,
+            )
         except Exception as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
@@ -758,6 +990,9 @@ CLASSES = (
     ALUDIY_OT_delete_selected_members,
     ALUDIY_OT_create_sample_frame,
     ALUDIY_OT_rebuild_scene,
+    ALUDIY_OT_edit_active_node,
+    ALUDIY_OT_edit_member_endpoint,
+    ALUDIY_OT_translate_active_member,
     ALUDIY_OT_resize_active_member,
     ALUDIY_OT_change_active_profile,
     ALUDIY_OT_draw_member,

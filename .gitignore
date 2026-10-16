@@ -10,8 +10,3 @@ build/
 .DS_Store
 .superpowers/
 site/
-.worktrees/
-*.tar.xz
-extension/aludiy_designer/resources/*.sqlite
-packages/*.zip
-packages/SHA256SUMS.txt

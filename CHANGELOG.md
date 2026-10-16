@@ -4,8 +4,15 @@ All notable AluDIY Designer changes are recorded here. The project is in alpha; 
 
 ## Unreleased
 
-- Establish the public source repository and GitHub-based Blender update channel.
-- Add CI, deterministic package checks, GitHub Releases, and GitHub Pages publication.
+- Continue toward complete engineering snapping and persistent constraints.
+
+## 0.1.6-alpha
+
+- Add exact XYZ editing for selected engineering nodes.
+- Add exact start/end coordinate editing and XYZ translation for selected members.
+- Propagate shared-node edits to all connected members and update their revisions.
+- Add selected-member reference dimensions and selected-node coordinate feedback in the line view.
+- Add the first GitHub Pages / Blender remote extension repository release pipeline.
 
 ## 0.1.5-alpha
 
