@@ -36,7 +36,7 @@ def test_extension_zip_has_blender_root_layout_and_runtime_resources() -> None:
         assert not any("__pycache__" in name or name.endswith(".pyc") for name in names)
         assert not any(name.startswith("tests/") for name in names)
         manifest = tomllib.loads(archive.read("blender_manifest.toml").decode("utf-8"))
-        assert manifest["version"] == "0.1.13"
+        assert manifest["version"] == "0.1.14"
         assert manifest["blender_version_min"] == "5.2.0"
 
 

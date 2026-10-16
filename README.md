@@ -1,3 +1,7 @@
+# AluDIY Designer · 0.1.14 Preview
+
+本轮进入槽轨定位与显式附着。使用已有更新源直接更新，安装ZIP仅作备用。体验步骤见 `docs/acceptance/v0.1.14-alpha.md`；首次槽轨关联升级数据为0.3.0，请另存副本，不要用旧插件覆盖。槽位仍是语义测试目录，不是制造级节点或结构验算。
+
 ## 最新 Preview：0.1.13-alpha
 
 双视窗创建/切换与投影同步修复。原 Layout 保留、自动进入 ALU DIY、重复设置不新增工作区；旧 Layout.001 不自动删除。详见 `docs/acceptance/v0.1.13-alpha.md`。

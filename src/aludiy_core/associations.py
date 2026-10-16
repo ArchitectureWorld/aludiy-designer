@@ -5,12 +5,45 @@ attachment to a normalized station along an uncut host design axis. This is not
 an assembly-joint, slot-fitting or structural-analysis solver.
 """
 from __future__ import annotations
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import math
 from .errors import ValidationError
-from .model import Project, Node
+from .model import Project, Node, _finite_tuple, _non_empty
 
 TOLERANCE_MM = 0.001
+
+@dataclass(frozen=True, slots=True)
+class SlotReference:
+    """Revision-bound snapshot; profile definitions remain in the catalog.
+
+    Identity is Member + ProfileType/revision + Interface ID. UV is an immutable
+    document reference snapshot so pure/offline geometry needs no global catalog.
+    Blender boundaries additionally compare the snapshot with that catalog.
+    """
+    profile_type_id: str
+    catalog_revision: str
+    interface_id: str
+    center_uv_mm: tuple[float, float]
+    interface_standard_id: str
+
+    def __post_init__(self):
+        for field in ('profile_type_id', 'catalog_revision', 'interface_id', 'interface_standard_id'):
+            object.__setattr__(self, field, _non_empty(getattr(self, field), field))
+        object.__setattr__(self, 'center_uv_mm', _finite_tuple(self.center_uv_mm, 2, 'slot UV'))
+
+    def to_dict(self):
+        return dict(profile_type_id=self.profile_type_id, catalog_revision=self.catalog_revision,
+                    interface_id=self.interface_id, center_uv_mm=list(self.center_uv_mm),
+                    interface_standard_id=self.interface_standard_id)
+
+    @classmethod
+    def from_dict(cls, d):
+        try:
+            return cls(d['profile_type_id'], d['catalog_revision'], d['interface_id'],
+                       tuple(d['center_uv_mm']), d['interface_standard_id'])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValidationError('槽轨引用数据不完整或无效') from exc
+
 
 @dataclass(frozen=True, slots=True)
 class Association:
@@ -20,17 +53,22 @@ class Association:
     host_member_id: str = ''
     follower_node_id: str = ''
     station: float = 0.0
+    slot_reference: SlotReference | None = None
 
     def to_dict(self):
-        return dict(id=self.id,kind=self.kind,node_ids=list(self.node_ids),
-                    host_member_id=self.host_member_id,follower_node_id=self.follower_node_id,
-                    station=self.station)
+        result = dict(id=self.id,kind=self.kind,node_ids=list(self.node_ids),
+                      host_member_id=self.host_member_id,follower_node_id=self.follower_node_id,
+                      station=self.station)
+        if self.slot_reference is not None:
+            result['slot_reference'] = self.slot_reference.to_dict()
+        return result
 
     @classmethod
     def from_dict(cls,d):
         return cls(str(d['id']),str(d['kind']),tuple(d.get('node_ids',())),
                    str(d.get('host_member_id','')),str(d.get('follower_node_id','')),
-                   float(d.get('station',0)))
+                   float(d.get('station',0)),
+                   SlotReference.from_dict(d['slot_reference']) if d.get('slot_reference') is not None else None)
 
 @dataclass(frozen=True, slots=True)
 class AssociationChange:
@@ -68,11 +106,12 @@ def _groups_graph(project):
     for n in parent: groups.setdefault(root(n),[]).append(n)
     followers={}; children={g:set() for g in groups}; degree={g:0 for g in groups}
     for r in project.associations.values():
-        if r.kind!='ON_MEMBER': continue
+        if r.kind not in {'ON_MEMBER','ON_SLOT'}: continue
         dest=root(r.follower_node_id); host=project.members[r.host_member_id]
         if dest in followers:
             previous=followers[dest]
-            if previous.host_member_id==r.host_member_id and abs(previous.station-r.station)<1e-10:
+            if (previous.kind==r.kind and previous.slot_reference==r.slot_reference and
+                    previous.host_member_id==r.host_member_id and abs(previous.station-r.station)<1e-10):
                 continue
             raise ValidationError('同一关联点有多个主杆，请减少选择或先解除关联')
         followers[dest]=r
@@ -98,24 +137,25 @@ def validate_associations(project):
             p=project.nodes[r.node_ids[0]].position_mm
             if any(math.dist(p,project.nodes[n].position_mm)>TOLERANCE_MM for n in r.node_ids):
                 raise ValidationError('端点关联位置不一致；请先吸附定位')
-        elif r.kind=='ON_MEMBER':
+        elif r.kind in {'ON_MEMBER','ON_SLOT'}:
             if r.host_member_id not in project.members or r.follower_node_id not in project.nodes: raise ValidationError('杆身关联引用无效')
-            if not math.isfinite(r.station) or not 0<r.station<1: raise ValidationError('杆身关联位置无效')
+            valid_station = 0 <= r.station <= 1 if r.kind=='ON_SLOT' else 0 < r.station < 1
+            if not math.isfinite(r.station) or not valid_station: raise ValidationError('杆身/槽轨关联位置无效')
             m=project.members[r.host_member_id]
             if r.follower_node_id in (m.start_node_id,m.end_node_id): raise ValidationError('不能附着于自身主杆端点')
             a=project.nodes[m.start_node_id].position_mm; b=project.nodes[m.end_node_id].position_mm
-            expected=tuple(a[i]+r.station*(b[i]-a[i]) for i in range(3))
+            expected=attachment_position(project,r)
             if math.dist(expected,project.nodes[r.follower_node_id].position_mm)>TOLERANCE_MM:
                 raise ValidationError('杆身关联位置不一致')
         else: raise ValidationError('未知关联类型')
     _groups_graph(project)
 
 
-def propagate_positions(project, replacements):
+def propagate_positions(project, replacements, *, changed_member_ids=()):
     if not project.associations: return dict(replacements)
     root,groups,followers,ordered=_groups_graph(project)
     pos={n:project.nodes[n].position_mm for n in project.nodes}
-    touched=set()
+    touched=set(); changed_members=set(changed_member_ids)
     for group in ordered:
         nodes=groups[group]; direct=[replacements[n] for n in nodes if n in replacements]
         if direct and any(math.dist(direct[0],p)>TOLERANCE_MM for p in direct):
@@ -124,10 +164,10 @@ def propagate_positions(project, replacements):
         if group in followers:
             r=followers[group]; h=project.members[r.host_member_id]
             a,b=pos[h.start_node_id],pos[h.end_node_id]
-            expected=tuple(a[i]+r.station*(b[i]-a[i]) for i in range(3))
+            expected=attachment_position(project,r,pos)
             if desired is not None and math.dist(desired,expected)>TOLERANCE_MM:
                 raise ValidationError('所选端点受主杆关联约束；请先解除关联，或同时移动主杆')
-            if desired is not None or root(h.start_node_id) in touched or root(h.end_node_id) in touched:
+            if desired is not None or h.id in changed_members or root(h.start_node_id) in touched or root(h.end_node_id) in touched:
                 desired=expected
         if desired is not None:
             touched.add(group)
@@ -148,10 +188,10 @@ def _selection(project,member_ids=(),node_ids=(),endpoint=None):
 
 
 def _signature(r):
-    return (r.kind,tuple(sorted(r.node_ids)),r.host_member_id,r.follower_node_id)
+    return (r.kind,tuple(sorted(r.node_ids)),r.host_member_id,r.follower_node_id,r.slot_reference)
 
 
-def create_associations(project, *, member_ids=(), node_ids=()):
+def create_associations(project, *, member_ids=(), node_ids=(), catalog=None):
     mids,nids=_selection(project,member_ids,node_ids)
     if len(nids)<2: raise ValidationError('请多选相接的杆件或重合节点')
     q=Project.from_dict(project.to_dict()); proposals=[]
@@ -172,6 +212,9 @@ def create_associations(project, *, member_ids=(), node_ids=()):
         if len(hosts)>1: raise ValidationError(f'{nid} 命中多个主杆，请缩小选择范围')
         if hosts:
             mid,t=hosts[0]; proposals.append(Association('','ON_MEMBER',(),mid,nid,t))
+    if catalog is not None:
+        validate_slot_catalog(q,catalog)
+        proposals.extend(_slot_proposals(q,catalog,mids,nids))
     signatures={_signature(r) for r in q.associations.values()}
     count=0
     for r in proposals:
@@ -179,10 +222,11 @@ def create_associations(project, *, member_ids=(), node_ids=()):
         number=1
         while f'R-{number:03d}' in q.associations: number+=1
         rid=f'R-{number:03d}'
-        q.associations[rid]=Association(rid,r.kind,r.node_ids,r.host_member_id,r.follower_node_id,r.station)
+        q.associations[rid]=replace(r,id=rid)
         signatures.add(_signature(r));count+=1
     if not proposals: raise ValidationError('选中对象没有有效接合处；先吸附到端点或杆身轴线，再创建关联')
-    if count: q.schema_version='0.2.0'
+    if count and q.schema_version=='0.1.0': q.schema_version='0.2.0'
+    if any(r.kind=='ON_SLOT' for r in q.associations.values()): q.schema_version='0.3.0'
     q.validate()
     return AssociationChange(q,count)
 
@@ -192,7 +236,7 @@ def remove_associations(project, *, member_ids=(), node_ids=(),endpoint=None):
     if not mids and not nids: raise ValidationError('请先选择需要解除关联的杆件或节点')
     q=Project.from_dict(project.to_dict()); removed=[]
     for rid,r in q.associations.items():
-        if (r.kind=='COINCIDENT' and bool(set(r.node_ids)&nids)) or (r.kind=='ON_MEMBER' and (r.host_member_id in mids or r.follower_node_id in nids)):
+        if (r.kind=='COINCIDENT' and bool(set(r.node_ids)&nids)) or (r.kind in {'ON_MEMBER','ON_SLOT'} and (r.host_member_id in mids or r.follower_node_id in nids)):
             removed.append(rid)
     for rid in removed:
         r=q.associations[rid]
@@ -232,3 +276,94 @@ def append_independent_member(project, start_mm, end_mm, profile_type_id):
     mid=f'M-{i:03d}'
     q.add_member(Member(mid,start,end,profile_type_id))
     return q,mid
+
+
+def attachment_position(project, relation, positions=None):
+    """Resolve one-way host station from current nodes AND section roll."""
+    h = project.members[relation.host_member_id]
+    pos = positions or {n: item.position_mm for n, item in project.nodes.items()}
+    a, b = pos[h.start_node_id], pos[h.end_node_id]
+    point = tuple(a[i]+relation.station*(b[i]-a[i]) for i in range(3))
+    if relation.kind != 'ON_SLOT':
+        if relation.slot_reference is not None:
+            raise ValidationError('只有槽轨关联可携带槽引用')
+        return point
+    ref = relation.slot_reference
+    if project.schema_version != '0.3.0' or ref is None:
+        raise ValidationError('槽轨关联需要 0.3.0 数据格式和完整接口引用')
+    if h.profile_type_id != ref.profile_type_id or h.anchor_ref != 'PROFILE_ORIGIN':
+        raise ValidationError('主杆已换型或截面基准不匹配，请先解除槽轨关联并重新指定')
+    from .geometry import _section_frame, _normalize, _sub
+    u, v = _section_frame(_normalize(_sub(b,a)), h.roll_deg)
+    return tuple(point[i]+u[i]*ref.center_uv_mm[0]+v[i]*ref.center_uv_mm[1] for i in range(3))
+
+
+def slot_reference(project, host_member_id, interface_id, catalog):
+    if host_member_id not in project.members:
+        raise ValidationError('目标槽轨的主杆不存在')
+    host = project.members[host_member_id]
+    if host.anchor_ref != 'PROFILE_ORIGIN':
+        raise ValidationError('目标主杆使用尚未支持的截面定位基准')
+    profile = catalog.get(host.profile_type_id)
+    slot = profile.section.interfaces.get(interface_id)
+    if slot is None or slot.kind != 'T_SLOT_RAIL':
+        raise ValidationError('目标型材不存在该有效槽轨，请重新指定')
+    return SlotReference(profile.profile_type_id, profile.catalog_revision, slot.id,
+                         slot.center_uv_mm, slot.interface_standard_id)
+
+
+def validate_slot_catalog(project, catalog):
+    for r in project.associations.values():
+        if r.kind == 'ON_SLOT':
+            expected=slot_reference(project,r.host_member_id,r.slot_reference.interface_id,catalog)
+            if expected != r.slot_reference:
+                raise ValidationError(f'{r.id} 槽轨引用与目录版本或几何不一致，禁止静默适配')
+
+
+def _slot_proposals(project, catalog, host_ids, node_ids, *, interface_id=None):
+    from .profile_editing import interface_rails
+    rails = [(mid, rail) for mid in sorted(host_ids) for rail in interface_rails(project,mid,catalog)
+             if interface_id is None or rail.interface_id==interface_id]
+    proposals=[]
+    for nid in sorted(node_ids):
+        point=project.nodes[nid].position_mm; matches=[]
+        for mid,rail in rails:
+            m=project.members[mid]
+            if nid in (m.start_node_id,m.end_node_id): continue
+            a,b=rail.start_mm,rail.end_mm; d=tuple(b[i]-a[i] for i in range(3))
+            length2=sum(x*x for x in d)
+            if length2<=1e-12: raise ValidationError('目标主杆为零长度')
+            t=sum((point[i]-a[i])*d[i] for i in range(3))/length2
+            # Clamp numerical noise at finite rail endpoints, never snap to extension.
+            if t < -1e-12 or t > 1+1e-12: continue
+            t=max(0.,min(1.,t))
+            target=tuple(a[i]+t*d[i] for i in range(3))
+            if math.dist(point,target)<=TOLERANCE_MM:
+                ref=slot_reference(project,mid,rail.interface_id,catalog)
+                matches.append(Association('', 'ON_SLOT', (), mid, nid, t, ref))
+        if len(matches)>1:
+            raise ValidationError(f'{nid} 命中多个槽轨，请指定一个槽轨目标或缩小选择范围')
+        proposals.extend(matches)
+    return proposals
+
+
+def create_slot_associations(project, catalog, *, host_member_id, interface_id,
+                             member_ids=(), node_ids=(), endpoint=None):
+    """Create only requested slot links; no movement, graph guessing or welding."""
+    slot_reference(project,host_member_id,interface_id,catalog)
+    validate_slot_catalog(project,catalog)
+    _, nids = _selection(project,member_ids,node_ids,endpoint)
+    q=Project.from_dict(project.to_dict())
+    proposals=_slot_proposals(q,catalog,{host_member_id},nids,interface_id=interface_id)
+    if not proposals:
+        raise ValidationError('选中端点尚未位于目标槽轨；先用 G 或画线吸附定位，再创建关联')
+    signatures={_signature(r) for r in q.associations.values()}; count=0
+    for r in proposals:
+        if _signature(r) in signatures: continue
+        i=1
+        while f'R-{i:03d}' in q.associations:i+=1
+        q.associations[f'R-{i:03d}']=replace(r,id=f'R-{i:03d}')
+        signatures.add(_signature(r));count+=1
+    q.schema_version='0.3.0'
+    q.validate()
+    return AssociationChange(q,count)

@@ -306,9 +306,10 @@ def _validate_candidate_positions(
 def _apply_node_positions(
     project: Project,
     replacements: dict[str, Vector3],
+    *, changed_member_ids=(),
 ) -> GeometryChangeResult:
     from .associations import propagate_positions
-    replacements = propagate_positions(project, replacements)
+    replacements = propagate_positions(project, replacements, changed_member_ids=changed_member_ids)
     moved = {
         node_id: position
         for node_id, position in replacements.items()
