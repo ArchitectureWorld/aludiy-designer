@@ -13,7 +13,7 @@ from .vendor.aludiy_core import ProfileCatalog, Project
 
 CATALOG_REVISION = "alpha-2026.10"
 PROJECT_SCHEMA_VERSION = "0.1.0"
-EXTENSION_VERSION = "0.1.12-alpha"
+EXTENSION_VERSION = "0.1.13-alpha"
 WORKSPACE_NAME = "ALU DIY"
 AXIS_COLLECTION = "ALUDIY_AXES"
 SOLID_COLLECTION = "ALUDIY_SOLIDS"
@@ -115,8 +115,8 @@ class AluDIYSceneSettings(bpy.types.PropertyGroup):
     view_sync_mode: bpy.props.EnumProperty(
         name="视角联动",
         items=(
-            ("FULL", "完全同步", "同步方向、中心与缩放"),
-            ("ORIENTATION", "方向与中心", "缩放分别控制"),
+            ("FULL", "完全同步", "同步透视/正交投影、方向、中心、缩放与焦距"),
+            ("ORIENTATION", "方向与中心", "投影、方向与中心同步；缩放分别控制"),
             ("OFF", "关闭", "两个视窗独立观察"),
         ),
         default="FULL",

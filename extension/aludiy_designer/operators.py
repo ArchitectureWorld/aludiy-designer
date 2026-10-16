@@ -283,12 +283,11 @@ class ALUDIY_OT_setup_workspace(bpy.types.Operator):
 
     def execute(self, context):
         try:
-            count = view_sync.setup_workspace(context)
+            view_sync.setup_workspace(context)
         except Exception as exc:
             self.report({"ERROR"}, str(exc))
             set_status(context.scene, f"双视窗配置失败：{exc}")
             return {"CANCELLED"}
-        set_status(context.scene, f"双视窗已配置，检测到 {count} 个三维视图")
         return {"FINISHED"}
 
 
