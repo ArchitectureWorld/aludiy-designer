@@ -1,0 +1,22 @@
+name: Snap Baseline Export
+on:
+  push:
+    branches: ["feat/v0.1.9-snap-reconnect"]
+    paths: [".github/workflows/snap-baseline.yml"]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          mkdir -p evidence
+          git archive HEAD | xz > evidence/source.tar.xz
+          git rev-parse HEAD > evidence/source-sha.txt
+          sha256sum evidence/source.tar.xz > evidence/SHA256SUMS.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aludiy-snap-baseline
+          path: evidence/
+          retention-days: 14
