@@ -121,38 +121,16 @@ def append_sample_frame(
     if len(origin) != 3 or not all(math.isfinite(value) for value in origin):
         raise ValidationError("sample origin must contain three finite coordinates")
     sample = create_sample_frame(width_mm, depth_mm, profile_type_id)
+    from .associations import append_independent_member
     candidate = Project.from_dict(project.to_dict())
-    used = set(candidate.nodes) | set(candidate.members)
-
-    def allocate(prefix: str) -> tuple[str, ...]:
-        numbers = [int(key[len(prefix) + 1:]) for key in used
-                   if key.startswith(prefix + '-') and key[len(prefix) + 1:].isdecimal()]
-        number = max(numbers, default=0)
-        result = []
-        for _ in range(4):
-            number += 1
-            entity_id = f'{prefix}-{number:03d}'
-            while entity_id in used:
-                number += 1
-                entity_id = f'{prefix}-{number:03d}'
-            used.add(entity_id)
-            result.append(entity_id)
-        return tuple(result)
-
-    node_ids = allocate('N')
-    member_ids = allocate('M')
-    node_map = dict(zip(sorted(sample.nodes), node_ids))
-    for old_id, new_id in node_map.items():
-        point = sample.nodes[old_id].position_mm
-        position = tuple(point[i] + origin[i] for i in range(3))
-        candidate.add_node(Node(new_id, position))
-    for old_id, new_id in zip(sorted(sample.members), member_ids):
-        member = sample.members[old_id]
-        candidate.add_member(Member(
-            id=new_id,
-            start_node_id=node_map[member.start_node_id],
-            end_node_id=node_map[member.end_node_id],
-            profile_type_id=member.profile_type_id,
-        ))
+    node_ids=[];member_ids=[]
+    for member in sample.members.values():
+        start=sample.nodes[member.start_node_id].position_mm
+        end=sample.nodes[member.end_node_id].position_mm
+        start=tuple(start[i]+origin[i] for i in range(3))
+        end=tuple(end[i]+origin[i] for i in range(3))
+        candidate,mid=append_independent_member(candidate,start,end,profile_type_id)
+        member_ids.append(mid)
+        m=candidate.members[mid];node_ids.extend((m.start_node_id,m.end_node_id))
     candidate.validate()
-    return SampleFrameInsertion(candidate, node_ids, member_ids)
+    return SampleFrameInsertion(candidate, tuple(node_ids), tuple(member_ids))

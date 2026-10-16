@@ -65,6 +65,13 @@ def preview_move(project: Project, delta_mm, *, member_ids: Iterable[str] = (),
         return MovePreview(candidate, (), ())
     split = None
     if detach:
+        from .associations import remove_associations
+        candidate = remove_associations(candidate, endpoint=endpoint).project
+        owner,side=endpoint
+        m=candidate.members[owner]
+        new=m.start_node_id if side=='START' else m.end_node_id
+        if new!=targets[0]: split=new; targets=(new,)
+    if detach:
         owner, side = endpoint
         old_id = targets[0]
         referenced_elsewhere = any(m.id != owner and old_id in (m.start_node_id, m.end_node_id)

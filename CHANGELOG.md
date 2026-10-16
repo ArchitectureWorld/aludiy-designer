@@ -4,6 +4,16 @@ All notable AluDIY Designer changes are recorded here. The project is in alpha; 
 
 ## Unreleased
 
+## 0.1.10-alpha
+
+- Highlight every selected engineering member/node in both viewports with deduplicated counts and separate affected-object dashes.
+- G and new drawing/sample endpoints position without automatic association; existing shared nodes remain intact.
+- Explicit multi-selection Create/Remove Associations; coincident endpoint groups and one-way host-axis attachments with normalized station.
+- Preserve unrelated relationships during partial unlink; reject ambiguous hosts, cycles and conflicting moves atomically.
+- Keep authoritative snap coordinates in float64 through confirmation; no float32 roundtrip join mismatch.
+- Association files use schema 0.2.0; keep a separate backup before opening in older plugins.
+
+
 ## 0.1.9-alpha
 
 - Default G endpoint snapping with confirmed shared-node reconnection, including zero-displacement joins.

@@ -326,6 +326,7 @@ def _draw_direction_overlay() -> None:
         from . import g_move
         project = g_move.display_project(context.scene)
         selected_id = active_member_id(context)
+        selected_ids, selected_nodes = g_move.selection_summary(context)
         selected_node_id = active_node_id(context)
         if g_move._ACTIVE is not None and g_move._ACTIVE._candidate is not None:
             selected_node_id = g_move._ACTIVE._candidate.detached_node_id or selected_node_id
@@ -336,13 +337,13 @@ def _draw_direction_overlay() -> None:
             end = _project(project.nodes[member.end_node_id].position_mm)
             if start is None or end is None:
                 continue
-            width = 4.5 if member_id == selected_id else 2.8
+            width = 4.5 if member_id in selected_ids else 2.8
             _polyline(
                 [(start.x, start.y), (end.x, end.y)],
                 colors=[START_COLOR, END_COLOR],
                 width=width,
             )
-            point_size = 11.0 if member_id == selected_id else 8.0
+            point_size = 11.0 if member_id in selected_ids else 8.0
             _points(
                 [(start.x, start.y), (end.x, end.y)],
                 [START_COLOR, END_COLOR],

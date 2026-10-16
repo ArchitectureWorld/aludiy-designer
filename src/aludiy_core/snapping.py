@@ -25,10 +25,12 @@ class SnapCandidate:
     position_mm: Vector3
     distance_px: float
     node_id: str | None = None
+    member_id: str | None = None
+    station: float | None = None
 
     @property
     def key(self) -> str:
-        return self.node_id or self.kind
+        return self.node_id or (f"{self.kind}:{self.member_id}" if self.member_id else self.kind)
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,3 +169,43 @@ def preview_reconnect(project: Project, delta_mm, *, anchor_node_id: str,
     moved = tuple(sorted((set(result.moved_node_ids) - {source_id}) | {target_node_id}))
     return ReconnectPreview(candidate, moved, tuple(sorted(affected)), None,
                             target_node_id, source_id)
+
+
+def member_candidates(project: Project, *, origin_mm, cursor_px, project_point,
+                      ray_origin_mm, ray_direction, excluded_member_ids=(),
+                      radius_px=14.0, axis=None, plane_lock=False,
+                      exact_position_mm=None):
+    """Closest design-axis station and midpoint in the screen aperture.
+
+    Ray/line minimization uses float64 Python values. This is axis snapping,
+    not a claim that the physical slot or outside face has been fitted.
+    """
+    result=[];excluded=set(excluded_member_ids)
+    for mid,m in project.members.items():
+        if mid in excluded: continue
+        a=project.nodes[m.start_node_id].position_mm;b=project.nodes[m.end_node_id].position_mm
+        u=tuple(b[i]-a[i] for i in range(3));r=tuple(ray_origin_mm[i]-a[i] for i in range(3))
+        d=tuple(float(v) for v in ray_direction); dn=math.sqrt(sum(v*v for v in d))
+        d=tuple(v/dn for v in d); uu=sum(v*v for v in u);ud=sum(u[i]*d[i] for i in range(3))
+        denominator=uu-ud*ud
+        if uu<=1e-12: continue
+        t=(sum(u[i]*r[i] for i in range(3))-ud*sum(d[i]*r[i] for i in range(3)))/denominator if denominator>1e-9 else .5
+        if axis is not None:
+            k='XYZ'.index(axis); fixed=(k,) if plane_lock else tuple(i for i in range(3) if i!=k)
+            ts=[(origin_mm[i]-a[i])/u[i] for i in fixed if abs(u[i])>1e-12]
+            if ts:t=ts[0]
+        if exact_position_mm is not None:
+            t=sum((exact_position_mm[i]-a[i])*u[i] for i in range(3))/uu
+        for station,kind in ((.5,'MIDPOINT'),(max(0.0,min(1.0,t)),'AXIS')):
+            if not 1e-8<station<1-1e-8:continue
+            point=tuple(a[i]+station*u[i] for i in range(3))
+            if not allowed_position(origin_mm,point,axis,plane_lock):continue
+            if exact_position_mm is not None and math.dist(point,exact_position_mm)>JOIN_TOLERANCE_MM:continue
+            screen=project_point(point)
+            if screen is None:continue
+            distance=math.dist(cursor_px,screen)
+            if distance<=radius_px:
+                result.append(SnapCandidate(kind,point,distance,None,mid,station))
+    # A midpoint has priority only in its own aperture. End nodes are considered
+    # first by the caller, avoiding an ambiguous endpoint/body weld.
+    return tuple(sorted(result,key=lambda c:(c.distance_px,0 if c.kind=='MIDPOINT' else 1,c.member_id)))

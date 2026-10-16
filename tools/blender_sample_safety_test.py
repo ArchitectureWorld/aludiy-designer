@@ -100,7 +100,7 @@ def run():
     key('F6'); yield
     after = data()
     check(after['project_id'] == before['project_id'], 'insertion preserves project identity')
-    check(len(after['members']) == 5 and len(after['nodes']) == 6, 'one sample appends four members and four nodes')
+    check(len(after['members']) == 5 and len(after['nodes']) == 10, 'one sample appends four members and eight independent nodes')
     check(all(m in after['members'] for m in before['members']) and all(n in after['nodes'] for n in before['nodes']), 'old coordinates parameters and topology unchanged')
     check(any(n['position_mm'] == [1500.0, 0.0, 0.0] for n in after['nodes']), 'sample begins at the 3D cursor')
     for kind in ['MEMBER_AXIS', 'MEMBER_SOLID']:
@@ -116,7 +116,7 @@ def run():
     check(data() == after, 'cancel reset preserves the complete project')
     key('F6'); yield
     repeated = data()
-    check(len(repeated['members']) == 9 and len(repeated['nodes']) == 10, 'repeated insertion appends rather than replaces')
+    check(len(repeated['members']) == 9 and len(repeated['nodes']) == 18, 'repeated insertion appends rather than replaces')
     check(all(m in repeated['members'] for m in after['members']), 'second insertion preserves every previous member')
     check(tuple(v for row in bpy.context.scene.objects[cube_name].matrix_world for v in row) == native_matrix, 'ordinary Blender object untouched')
     key('F7'); yield

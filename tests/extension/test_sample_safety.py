@@ -73,7 +73,7 @@ def test_sample_keeps_existing_engineering_data(setup):
     assert after['project_id'] == before['project_id'], 'Sample replaced the user project'
     assert after['catalog_revision'] == before['catalog_revision']
     assert len(after['members']) == len(before['members']) + 4
-    assert len(after['nodes']) == len(before['nodes']) + 4
+    assert len(after['nodes']) == len(before['nodes']) + 8
     assert all(item in after['members'] for item in before['members'])
     assert all(item in after['nodes'] for item in before['nodes'])
     assert state.cache == after
@@ -87,9 +87,9 @@ def test_repeated_sample_inserts_have_distinct_ids_and_no_auto_weld(setup):
     first = context.scene.payload
     assert op.execute(context) == {'FINISHED'}
     after = context.scene.payload
-    assert len(after['members']) == 12 and len(after['nodes']) == 12
+    assert len(after['members']) == 12 and len(after['nodes']) == 20
     assert all(item in after['members'] for item in first['members'])
-    assert len({item['id'] for item in after['members'] + after['nodes']}) == 24
+    assert len({item['id'] for item in after['members'] + after['nodes']}) == 32
 
 
 def test_insert_uses_3d_cursor_in_millimetres(setup):

@@ -72,12 +72,14 @@ class ALUDIY_PT_main(bpy.types.Panel):
         move = box.operator("aludiy.move_engineering", text="G · 鼠标移动", icon="EMPTY_ARROWS")
         move.connect_only = False
         box.operator("aludiy.translate_active_member", text="整根精确平移 ΔXYZ")
-        reconnect = box.row()
-        reconnect.enabled = bool(ep)
-        op = reconnect.operator("aludiy.move_engineering", text="连接到目标…", icon="LINKED")
-        op.connect_only = True
-        box.label(text="G 默认吸附；按住 Ctrl 自由移动")
-        box.label(text="端点：确认后连接；地面：仅定位")
+        mids,nids=g_move.selection_summary(context)
+        box.label(text=f"已选 {len(mids)} 根型材 / {len(nids)} 个节点")
+        relation_row=box.row(align=True)
+        relation_row.operator("aludiy.create_associations",icon="LINKED")
+        relation_row.operator("aludiy.remove_associations",icon="UNLINKED")
+        box.label(text="G 吸附仅定位 · Ctrl 临时自由移动")
+        box.label(text="多选相接杆件/节点 → 创建关联")
+        box.label(text="杆身关联：设计轴线；主杆不切断")
         box.prop(scene_settings, "ground_snap_enabled")
         ground = box.row()
         ground.enabled = scene_settings.ground_snap_enabled
