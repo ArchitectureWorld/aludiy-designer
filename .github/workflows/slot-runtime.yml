@@ -50,14 +50,20 @@ jobs:
           P="$(python tools/release_meta.py package-name)"
           "$B" --command extension validate "dist/$P"
           bash tools/verify_slot_attachment.sh "$B" "$GITHUB_WORKSPACE/evidence/runtime" | tee evidence/runtime-summary.log
+      - name: Check out immutable 0.1.13 upgrade baseline
+        uses: actions/checkout@v4
+        with:
+          ref: "286b580ad1fc72a866725e9ad06015264ef6ef28"
+          path: .upgrade-baseline
+          persist-credentials: false
       - name: Install over 0.1.13 without manual uninstall and reopen saved project
         run: |
           set -euo pipefail
           B="$RUNNER_TEMP/blender-5.2.2-linux-x64/blender"
           P="$(python tools/release_meta.py package-name)"
-          curl -fL --retry 3 https://architectureworld.github.io/aludiy-designer/aludiy_designer-0.1.13.zip -o "$RUNNER_TEMP/old.zip"
-          echo "1b53562faa55471ba409ee8b7c16a168158274ffee1d87f9df9e2b0a0adca91f  $RUNNER_TEMP/old.zip" | sha256sum --check
-          python tools/verify_slot_upgrade.py "$B" "$RUNNER_TEMP/old.zip" "dist/$P" "$GITHUB_WORKSPACE/evidence/upgrade" | tee evidence/upgrade-summary.log
+          test "$(git -C .upgrade-baseline rev-parse HEAD)" = 286b580ad1fc72a866725e9ad06015264ef6ef28
+          python .upgrade-baseline/tools/build_extension.py
+          python tools/verify_slot_upgrade.py "$B" "$GITHUB_WORKSPACE/.upgrade-baseline/dist/aludiy_designer-0.1.13.zip" "dist/$P" "$GITHUB_WORKSPACE/evidence/upgrade" | tee evidence/upgrade-summary.log
       - name: Record immutable tested source
         run: |
           git rev-parse HEAD > evidence/source-sha.txt
