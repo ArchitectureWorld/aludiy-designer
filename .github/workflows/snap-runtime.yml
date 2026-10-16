@@ -1,0 +1,63 @@
+name: Snap Reconnect Runtime Verification
+on:
+  push:
+    branches: ["feat/v0.1.9-snap-reconnect"]
+    paths: [".github/workflows/snap-runtime.yml", "src/**", "extension/**", "tests/**", "tools/**"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: snap-runtime-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Python and deterministic build regressions
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          python -m pip install pytest
+          python tools/sync_core_into_extension.py
+          pytest -q | tee evidence/pytest.log
+          python -m compileall -q src extension tools
+          python tools/build_extension.py
+          P="$(python tools/release_meta.py package-name)"
+          cp "dist/$P" "$RUNNER_TEMP/first.zip"
+          python tools/build_extension.py
+          cmp "dist/$P" "$RUNNER_TEMP/first.zip"
+      - name: Prepare verified official Blender and X11
+        run: |
+          set -euo pipefail
+          BASE=https://download.blender.org/release/Blender5.2
+          B=blender-5.2.2-linux-x64.tar.xz
+          curl -fL --retry 3 "$BASE/$B" -o "$RUNNER_TEMP/$B"
+          curl -fL --retry 3 "$BASE/blender-5.2.2.sha256" -o "$RUNNER_TEMP/official.sha256"
+          (cd "$RUNNER_TEMP"; grep -F "$B" official.sha256 | sha256sum --check)
+          tar -xf "$RUNNER_TEMP/$B" -C "$RUNNER_TEMP"
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq xvfb xauth libxtst6 ffmpeg
+      - name: Real Blender reconnection, Ctrl, ground, Undo and regressions
+        run: |
+          set -euo pipefail
+          B="$RUNNER_TEMP/blender-5.2.2-linux-x64/blender"
+          "$B" --command extension validate "dist/$(python tools/release_meta.py package-name)"
+          bash tools/verify_snapping.sh "$B" "$GITHUB_WORKSPACE/evidence/runtime"
+      - name: Retain test evidence and source identity
+        if: always()
+        run: |
+          git rev-parse HEAD > evidence/source-sha.txt
+          git archive HEAD | xz > evidence/source.tar.xz
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aludiy-snap-reconnect-evidence
+          path: |
+            evidence/
+            dist/*.zip
+          retention-days: 14
