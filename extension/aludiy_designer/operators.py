@@ -679,26 +679,13 @@ class ALUDIY_OT_change_active_profile(bpy.types.Operator):
     bl_options = {"REGISTER", "UNDO"}
 
     def execute(self, context):
-        member_id = active_member_id(context)
-        if not member_id:
-            self.report({"WARNING"}, "请先选择型材轴线或实体")
-            return {"CANCELLED"}
-        profile_id = _selected_profile(context.scene)
+        from .profile_tools import edit_selection
         try:
-            catalog = get_catalog()
-            catalog.get(profile_id)
-            project = get_project(context.scene)
-            member = project.members[member_id]
-            member.profile_type_id = profile_id
-            member.revision += 1
-            set_project(context.scene, project)
-            scene_adapter.rebuild_scene(context.scene, project, catalog)
-            scene_adapter.select_entity(context.scene, context.view_layer, member_id)
+            changed = edit_selection(context, profile_type_id=_selected_profile(context.scene))
+            return {"FINISHED"} if changed else {"CANCELLED"}
         except Exception as exc:
-            self.report({"ERROR"}, str(exc))
+            self.report({"WARNING"}, str(exc))
             return {"CANCELLED"}
-        set_status(context.scene, f"{member_id} 已替换为 {profile_id}")
-        return {"FINISHED"}
 
 
 class ALUDIY_OT_draw_member(bpy.types.Operator):

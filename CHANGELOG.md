@@ -1,3 +1,7 @@
+# 0.1.12-alpha
+
+批量换型、截面相对/绝对旋转、双窗只读截面/槽位检查；保留全选择集及现有轴线关联。语义测试目录，不含真实槽轨附着。
+
 # Changelog
 
 All notable AluDIY Designer changes are recorded here. The project is in alpha; project-file compatibility is documented per release.

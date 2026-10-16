@@ -44,6 +44,9 @@ class ALUDIY_PT_main(bpy.types.Panel):
         box.prop(scene_settings, "view_sync_mode")
         box.prop(scene_settings, "solid_display_mode")
 
+        from . import profile_tools
+        profile_tools.draw_panel(layout, context)
+
         box = layout.box()
         box.label(text="移动与端点", icon="EMPTY_ARROWS")
         ep = g_move.endpoint_context(context)

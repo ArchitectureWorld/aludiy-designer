@@ -13,7 +13,7 @@ from .vendor.aludiy_core import ProfileCatalog, Project
 
 CATALOG_REVISION = "alpha-2026.10"
 PROJECT_SCHEMA_VERSION = "0.1.0"
-EXTENSION_VERSION = "0.1.11-alpha"
+EXTENSION_VERSION = "0.1.12-alpha"
 WORKSPACE_NAME = "ALU DIY"
 AXIS_COLLECTION = "ALUDIY_AXES"
 SOLID_COLLECTION = "ALUDIY_SOLIDS"
@@ -55,10 +55,10 @@ def _solid_display_mode_updated(_self: Any, context: bpy.types.Context | None) -
     try:
         from . import scene_adapter
 
-        selected_member_id = active_member_id(context)
+        from . import selection_state
+        snapshot = selection_state.capture(context)
         scene_adapter.rebuild_scene(context.scene, get_project(context.scene), get_catalog())
-        if selected_member_id is not None:
-            scene_adapter.select_entity(context.scene, context.view_layer, selected_member_id)
+        selection_state.restore(context, snapshot)
         label = "BOX" if _self.solid_display_mode == "BOX" else "型材细节"
         set_status(context.scene, f"三维显示精度已切换为 {label}")
     except Exception as exc:
@@ -66,6 +66,14 @@ def _solid_display_mode_updated(_self: Any, context: bpy.types.Context | None) -
 
 
 class AluDIYSceneSettings(bpy.types.PropertyGroup):
+    edit_profile_id: bpy.props.EnumProperty(name="目标规格", items=profile_enum_items,
+        description="只用于替换所选型材，不改变新画杆件的默认规格")
+    profile_roll_input: bpy.props.StringProperty(name="截面角度", default="0",
+        description="角度单位为度，可输入 45+45；不是长度，不接受 mm/m")
+    show_section_inspector: bpy.props.BoolProperty(name="查看截面与槽位", default=True)
+    inspected_member_id: bpy.props.StringProperty(default="", options={"HIDDEN","SKIP_SAVE"})
+    inspected_profile_id: bpy.props.StringProperty(default="", options={"HIDDEN","SKIP_SAVE"})
+    inspected_interface_id: bpy.props.StringProperty(default="", options={"HIDDEN","SKIP_SAVE"})
     endpoint_member_id: bpy.props.StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
     endpoint_side: bpy.props.StringProperty(default="", options={"HIDDEN", "SKIP_SAVE"})
     move_connection_mode: bpy.props.EnumProperty(
