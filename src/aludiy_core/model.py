@@ -407,7 +407,7 @@ class Project:
         )
 
     def validate(self) -> None:
-        if self.schema_version not in {"0.1.0", "0.2.0"}:
+        if self.schema_version not in {"0.1.0", "0.2.0", "0.3.0"}:
             raise ValidationError("Unsupported project schema; use a compatible extension")
         from .associations import validate_associations
         validate_associations(self)
@@ -431,7 +431,7 @@ class Project:
             "nodes": [self.nodes[key].to_dict() for key in sorted(self.nodes)],
             "members": [self.members[key].to_dict() for key in sorted(self.members)],
         }
-        if self.associations or self.schema_version == "0.2.0":
+        if self.associations or self.schema_version in {"0.2.0", "0.3.0"}:
             payload["associations"] = [self.associations[k].to_dict() for k in sorted(self.associations)]
         return payload
 

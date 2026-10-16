@@ -55,6 +55,13 @@ def edit_profiles(project: Project, member_ids: Iterable[str], catalog: ProfileC
     if roll_deg is not None and (not math.isfinite(roll_deg) or abs(roll_deg) > 1e9):
         raise ValidationError('截面角度必须是有限且合理的度数')
     project.validate()
+    from .associations import validate_slot_catalog
+    validate_slot_catalog(project, catalog)
+    if profile_type_id is not None:
+        for r in project.associations.values():
+            if (r.kind=='ON_SLOT' and r.host_member_id in ids and
+                    project.members[r.host_member_id].profile_type_id!=profile_type_id):
+                raise ValidationError('主杆存在槽轨附着；请先解除关联，换型后重新指定接口，不能按同名槽猜测兼容')
     for mid in ids:
         m = project.members[mid]
         catalog.get(m.profile_type_id)
@@ -73,6 +80,12 @@ def edit_profiles(project: Project, member_ids: Iterable[str], catalog: ProfileC
         m.roll_deg = angle
         m.revision += 1
         changed.append(mid)
+    # Roll changes have no direct node displacement but move off-axis slot rails.
+    from .geometry import _apply_node_positions
+    result = _apply_node_positions(candidate, {}, changed_member_ids=changed)
+    changed = sorted(set(changed) | set(result.affected_member_ids))
+    for mid in changed:
+        candidate.members[mid].revision=project.members[mid].revision+1
     candidate.validate()
     return ProfileEdit(candidate, tuple(changed))
 

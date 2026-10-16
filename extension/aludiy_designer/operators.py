@@ -209,12 +209,14 @@ def _point_from_event(context: bpy.types.Context, event, operator):
     origin = start or point or (0.0, 0.0, operator._workplane_offset_mm)
     excluded = {nid for nid, node in project.nodes.items()
                 if start is not None and math.dist(node.position_mm, start) <= JOIN_TOLERANCE_MM}
+    from . import slot_tools
     opts = engineering_candidates(
         project, origin_mm=origin,
         cursor_px=(event.mouse_x - region.x, event.mouse_y - region.y),
         project_point=project_point, ray_origin_mm=ro, ray_direction=rd,
         excluded_node_ids=excluded, radius_px=settings(context.scene).snap_pixel_radius,
-        axis=axis, plane_lock=plane_lock, perpendicular=start is not None)
+        axis=axis, plane_lock=plane_lock, perpendicular=start is not None,
+        catalog=get_catalog(), slot_target=slot_tools.target_spec(context.scene,project))
     if start is not None:
         opts = tuple(c for c in opts if math.dist(c.position_mm, start) > JOIN_TOLERANCE_MM)
     keys = tuple(c.key for c in opts)

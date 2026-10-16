@@ -59,7 +59,7 @@ def edit_selection(context, *, profile_type_id=None, roll_deg=None, relative=Fal
     if profile_type_id is not None:
         clear_slot(context.scene)
     runtime.set_status(context.scene,
-        f'已修改 {len(result.changed_member_ids)} 根 · 轴线/关联保持 · 槽位适配未校验 · Ctrl+Z 撤销')
+        f'已更新 {len(result.changed_member_ids)} 根（含关联影响）· 槽轨附着跟随 · Ctrl+Z 撤销')
     g_move._redraw()
     return True
 
@@ -67,7 +67,7 @@ def edit_selection(context, *, profile_type_id=None, roll_deg=None, relative=Fal
 class ALUDIY_OT_edit_selected_profiles(bpy.types.Operator):
     bl_idname = 'aludiy.edit_selected_profiles'
     bl_label = '修改所选型材截面'
-    bl_description = '批量换型或绕各杆自身轴线旋转截面；不移动设计线，不自动适配连接件'
+    bl_description = '批量换型或绕各杆自身轴线旋转截面；主杆轴线不动；槽轨附着端跟随旋转，不自动适配连接件'
     bl_options = {'REGISTER', 'UNDO'}
     action: EnumProperty(items=(('PROFILE','替换规格',''), ('ROTATE','相对旋转',''), ('SET','设置绝对角度','')), default='PROFILE')
     angle: StringProperty(default='', options={'SKIP_SAVE'})
@@ -150,11 +150,15 @@ def draw_panel(layout, context):
             face = slot.host_face_id.replace('FACE_P','+').replace('FACE_N','−')
             op = grid.operator('aludiy.inspect_profile_slot', text=f'{face} · 槽 {slot.lane_index+1}/{slot.lane_count}', depress=slot.id==active)
             op.interface_id=slot.id
+        row=box.row();row.enabled=bool(active)
+        row.operator('aludiy.set_slot_target',text='设为槽轨定位目标',icon='SNAP_EDGE')
     else:
         box.prop(s, 'show_section_inspector')
         box.label(text='选择一根型材查看截面与槽 ID')
-    box.label(text='仅测试槽位检查；不自动吸附/关联', icon='INFO')
-    box.label(text='换型保留轴线关联；不代表接口适配')
+    box.label(text='测试槽轨；吸附后仍需手动关联',icon='INFO')
+    box.label(text='带槽轨附着的主杆换型需先解除关联')
+    from . import slot_tools
+    slot_tools.draw_panel(layout,context)
 
 
 def _draw_inspector():
@@ -211,7 +215,7 @@ def _draw_inspector():
             if u<-.1:tx-=30
             if v<-.1:ty-=10
             ov._text(tx,ty,label,size=9,color=color)
-        ov._text(x+10,y+38,'槽轨仅查看，不建立新关联',size=10)
+        ov._text(x+10,y+38,'检查只读；设为目标可定位',size=10)
         ov._text(x+10,y+22,sid or '点击右侧槽位按钮查看',size=11,color=(1,.75,.25,1) if sid else ov.TEXT_COLOR)
         ov._text(x+10,y+7,'槽形为示意，非制造级截面',size=9)
         if sid:

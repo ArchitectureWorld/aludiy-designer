@@ -27,9 +27,13 @@ class SnapCandidate:
     node_id: str | None = None
     member_id: str | None = None
     station: float | None = None
+    interface_id: str | None = None
+    point_kind: str = ''
 
     @property
     def key(self) -> str:
+        if self.interface_id:
+            return f'SLOT:{self.member_id}:{self.interface_id}:{self.point_kind}'
         return self.node_id or (f"{self.kind}:{self.member_id}" if self.member_id else self.kind)
 
 
@@ -224,13 +228,18 @@ def engineering_candidates(project: Project, *, origin_mm, cursor_px,
                            excluded_node_ids=(), excluded_member_ids=(), radius_px=14.0,
                            axis=None, plane_lock=False, exact_position_mm=None,
                            perpendicular=True, ground_mm=None, raw_position_mm=None,
-                           nodes_only=False) -> tuple[SnapCandidate, ...]:
+                           nodes_only=False, catalog=None, slot_target=None) -> tuple[SnapCandidate, ...]:
     """One geometry-only candidate pipeline for drawing and moving.
 
     Semantic points have priority within the pixel aperture: endpoint, midpoint,
     perpendicular foot, nearest axis station. Tab can still reach every target.
     Co-located *different* nodes/members are never merged or silently hidden.
     """
+    if slot_target is not None and not nodes_only:
+        return slot_candidates(project,catalog,slot_target,origin_mm=origin_mm,cursor_px=cursor_px,
+            project_point=project_point,ray_origin_mm=ray_origin_mm,ray_direction=ray_direction,
+            excluded_member_ids=excluded_member_ids,radius_px=radius_px,axis=axis,
+            plane_lock=plane_lock,exact_position_mm=exact_position_mm,perpendicular=perpendicular)
     options = list(node_candidates(
         project, origin_mm=origin_mm, cursor_px=cursor_px, project_point=project_point,
         excluded_node_ids=excluded_node_ids, radius_px=radius_px, axis=axis,
@@ -293,6 +302,12 @@ def describe_candidate(candidate: SnapCandidate | None, project: Project) -> str
         return '吸附开启 · 端点 / 中点 / 垂足 / 杆身 · 仅定位'
     if candidate.kind == 'NODE':
         return f'端点 {candidate.node_id} · 仅定位，不自动关联'
+    if candidate.kind == 'SLOT':
+        member = project.members[candidate.member_id]
+        length=math.dist(project.nodes[member.start_node_id].position_mm,project.nodes[member.end_node_id].position_mm)
+        kind={'START':'起端','END':'终端','MIDPOINT':'中点','PERPENDICULAR':'垂足','AXIS':'沿槽'}[candidate.point_kind]
+        return (f'槽轨 {candidate.member_id} / {candidate.interface_id} · {kind} '
+                f'{candidate.station*length:.1f} / {length:.1f} mm · 仅定位')
     if candidate.member_id:
         member = project.members[candidate.member_id]
         a = project.nodes[member.start_node_id].position_mm
@@ -323,3 +338,62 @@ def resolve_draw_endpoint(start_mm, current_mm, typed_text='', *, axis=None,
         norm = math.sqrt(sum(v*v for v in difference))
         direction = tuple(v/norm for v in difference) if norm > 1e-9 else (1.0, 0.0, 0.0)
     return tuple(start_mm[i] + direction[i]*length for i in range(3))
+
+
+def slot_candidates(project, catalog, slot_target, *, origin_mm, cursor_px,
+                    project_point, ray_origin_mm, ray_direction, radius_px=14.,
+                    excluded_member_ids=(), axis=None, plane_lock=False,
+                    exact_position_mm=None, perpendicular=True):
+    """Candidates on one explicitly chosen semantic rail, not the host axis.
+
+    Stable IDs distinguish parallel lanes. The chosen target intentionally limits
+    the candidate family; releasing the target restores ordinary axis snapping.
+    All authoritative coordinates are Python doubles.
+    """
+    from .associations import slot_reference
+    from .profile_editing import interface_rails
+    if catalog is None:
+        raise ValidationError('槽轨定位需要有效型材目录')
+    mid, sid = slot_target
+    slot_reference(project,mid,sid,catalog)
+    if mid in set(excluded_member_ids):
+        return ()
+    rail=next(r for r in interface_rails(project,mid,catalog) if r.interface_id==sid)
+    a,b=rail.start_mm,rail.end_mm
+    ray=_vector3(ray_origin_mm,'ray origin'); d=_vector3(ray_direction,'ray direction')
+    dn=math.sqrt(sum(x*x for x in d))
+    if dn<=1e-12:raise ValidationError('视线方向无效，无法计算槽轨候选')
+    d=tuple(x/dn for x in d); u=tuple(b[i]-a[i] for i in range(3)); r=tuple(ray[i]-a[i] for i in range(3))
+    uu=sum(x*x for x in u); ud=sum(u[i]*d[i] for i in range(3));den=uu-ud*ud
+    if uu<=1e-12:raise ValidationError('槽轨主杆为零长度')
+    stations=[(0.,'START'),(1.,'END'),(.5,'MIDPOINT')]
+    if perpendicular:
+        foot=sum((origin_mm[i]-a[i])*u[i] for i in range(3))/uu
+        if 0<foot<1:stations.append((foot,'PERPENDICULAR'))
+    t=None
+    if den>max(1e-9,uu*1e-12):
+        t=(sum(u[i]*r[i] for i in range(3))-ud*sum(d[i]*r[i] for i in range(3)))/den
+    if axis is not None:
+        if axis not in 'XYZ':raise ValidationError('Invalid snap axis')
+        k='XYZ'.index(axis);fixed=(k,) if plane_lock else tuple(i for i in range(3) if i!=k)
+        ts=[(origin_mm[i]-a[i])/u[i] for i in fixed if abs(u[i])>1e-12]
+        if ts:t=ts[0]
+    if exact_position_mm is not None:
+        t=sum((exact_position_mm[i]-a[i])*u[i] for i in range(3))/uu
+    if t is not None:stations.append((max(0.,min(1.,t)),'AXIS'))
+    options=[]
+    for station,kind in stations:
+        point=tuple(a[i]+station*u[i] for i in range(3))
+        if not allowed_position(origin_mm,point,axis,plane_lock):continue
+        if exact_position_mm is not None and math.dist(point,exact_position_mm)>JOIN_TOLERANCE_MM:continue
+        screen=project_point(point)
+        if screen is None:continue
+        distance=math.dist(screen,cursor_px)
+        if distance<=radius_px:options.append(SnapCandidate('SLOT',point,distance,None,mid,station,sid,kind))
+    priority={'START':0,'END':0,'MIDPOINT':1,'PERPENDICULAR':2,'AXIS':3}
+    options.sort(key=lambda c:(priority[c.point_kind],c.distance_px,c.key))
+    result=[]
+    for c in options:
+        if any(math.dist(c.position_mm,o.position_mm)<=JOIN_TOLERANCE_MM for o in result):continue
+        result.append(c)
+    return tuple(result)

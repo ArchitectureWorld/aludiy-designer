@@ -405,6 +405,7 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
         return project_point_mm(self._region, self._area.spaces.active.region_3d, point)
 
     def _snap_delta(self, context, delta):
+        from . import slot_tools
         self._snap = None
         if self._free:
             self._snap_options = ()
@@ -430,7 +431,8 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
             excluded_member_ids=excluded_members, radius_px=runtime.settings(self._scene).snap_pixel_radius,
             axis=self._axis, plane_lock=self._plane_lock, exact_position_mm=exact,
             ground_mm=self._ground, raw_position_mm=tuple(origin[i]+delta[i] for i in range(3)),
-            nodes_only=self.connect_only)
+            nodes_only=self.connect_only, catalog=runtime.get_catalog(),
+            slot_target=slot_tools.target_spec(self._scene,self._original))
         keys = tuple(c.key for c in options)
         if keys != self._choice_keys:
             self._snap_choice = 0
@@ -721,20 +723,27 @@ def _draw_selection(context,ov):
 class ALUDIY_OT_create_associations(bpy.types.Operator):
     bl_idname='aludiy.create_associations'
     bl_label='创建关联'
-    bl_description='多选已相接杆件或重合节点，创建显式端点/杆身轴线关系；不移动构件'
+    bl_description='多选已相接杆件或重合节点，创建显式端点/杆身/槽轨关系；不移动构件'
     bl_options={'REGISTER','UNDO'}
     @classmethod
     def poll(cls,context): return ALUDIY_OT_move_engineering.poll(context)
     def execute(self,context):
         try:
             spec=target_spec(context)
-            if spec.get('endpoint'): raise ValidationError('请 Shift 多选杆件或节点后创建关联')
+            from . import slot_tools
+            from .vendor.aludiy_core.associations import create_slot_associations
             original=runtime.get_project(context.scene)
-            result=create_associations(original,**spec)
+            target=slot_tools.target_spec(context.scene,original)
+            if target:
+                result=create_slot_associations(original,runtime.get_catalog(),
+                    host_member_id=target[0],interface_id=target[1],**spec)
+            else:
+                if spec.get('endpoint'): raise ValidationError('请 Shift 多选相接杆件/节点；或先指定目标槽轨')
+                result=create_associations(original,catalog=runtime.get_catalog(),**spec)
             if not result.changed_count:
                 runtime.set_status(context.scene,'这些关联已存在');return {'CANCELLED'}
             _commit_relations(context,original,result.project,spec)
-            runtime.set_status(context.scene,f'已创建 {result.changed_count} 处关联；杆身按相对位置跟随主杆')
+            runtime.set_status(context.scene,f'已创建 {result.changed_count} 处关联；杆身/槽轨按相对位置跟随主杆')
             return {'FINISHED'}
         except Exception as exc:
             self.report({'WARNING'},str(exc));runtime.set_status(context.scene,str(exc));return {'CANCELLED'}
@@ -766,9 +775,12 @@ def _commit_relations(context,original,project,spec):
     selected=next(iter(mids or nids),None)
     if spec.get('endpoint'):
         owner,side=spec['endpoint'];selected=owner
-    _commit_project_update(context,original,project,selected_entity_id=selected)
-    for obj in context.view_layer.objects:
-        if obj.get('aludiy_managed'):obj.select_set(runtime.entity_id_from_object(obj) in mids|nids)
+    from . import selection_state
+    snapshot=selection_state.capture(context)
+    try:
+        _commit_project_update(context,original,project,selected_entity_id=selected)
+    finally:
+        selection_state.restore(context,snapshot)
     if spec.get('endpoint'):_select_endpoint(context,owner,side)
     _redraw()
 

@@ -13,7 +13,7 @@ from .vendor.aludiy_core import ProfileCatalog, Project
 
 CATALOG_REVISION = "alpha-2026.10"
 PROJECT_SCHEMA_VERSION = "0.1.0"
-EXTENSION_VERSION = "0.1.13-alpha"
+EXTENSION_VERSION = "0.1.14-alpha"
 WORKSPACE_NAME = "ALU DIY"
 AXIS_COLLECTION = "ALUDIY_AXES"
 SOLID_COLLECTION = "ALUDIY_SOLIDS"
@@ -66,6 +66,10 @@ def _solid_display_mode_updated(_self: Any, context: bpy.types.Context | None) -
 
 
 class AluDIYSceneSettings(bpy.types.PropertyGroup):
+    slot_target_member_id: bpy.props.StringProperty(default='', options={'HIDDEN','SKIP_SAVE'})
+    slot_target_interface_id: bpy.props.StringProperty(default='', options={'HIDDEN','SKIP_SAVE'})
+    slot_target_profile_id: bpy.props.StringProperty(default='', options={'HIDDEN','SKIP_SAVE'})
+    slot_target_catalog_revision: bpy.props.StringProperty(default='', options={'HIDDEN','SKIP_SAVE'})
     edit_profile_id: bpy.props.EnumProperty(name="目标规格", items=profile_enum_items,
         description="只用于替换所选型材，不改变新画杆件的默认规格")
     profile_roll_input: bpy.props.StringProperty(name="截面角度", default="0",
@@ -186,10 +190,15 @@ def get_project(scene: bpy.types.Scene) -> Project:
         set_project(scene, project)
         return project
     payload = json.loads(raw)
-    return Project.from_dict(payload)
+    project = Project.from_dict(payload)
+    from .vendor.aludiy_core.associations import validate_slot_catalog
+    validate_slot_catalog(project, get_catalog())
+    return project
 
 
 def set_project(scene: bpy.types.Scene, project: Project) -> None:
+    from .vendor.aludiy_core.associations import validate_slot_catalog
+    validate_slot_catalog(project, get_catalog())
     settings(scene).project_json = json.dumps(
         project.to_dict(),
         ensure_ascii=False,
