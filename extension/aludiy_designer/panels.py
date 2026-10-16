@@ -69,9 +69,20 @@ class ALUDIY_PT_main(bpy.types.Panel):
         op.endpoint = "START"
         op = row.operator("aludiy.select_endpoint", text="终端（红）")
         op.endpoint = "END"
-        box.operator("aludiy.move_engineering", text="G · 鼠标移动", icon="EMPTY_ARROWS")
+        move = box.operator("aludiy.move_engineering", text="G · 鼠标移动", icon="EMPTY_ARROWS")
+        move.connect_only = False
         box.operator("aludiy.translate_active_member", text="整根精确平移 ΔXYZ")
-        box.label(text="输入默认 mm；X/Y/Z 锁轴；Esc 取消")
+        reconnect = box.row()
+        reconnect.enabled = bool(ep)
+        op = reconnect.operator("aludiy.move_engineering", text="连接到目标…", icon="LINKED")
+        op.connect_only = True
+        box.label(text="G 默认吸附；按住 Ctrl 自由移动")
+        box.label(text="端点：确认后连接；地面：仅定位")
+        box.prop(scene_settings, "ground_snap_enabled")
+        ground = box.row()
+        ground.enabled = scene_settings.ground_snap_enabled
+        ground.prop(scene_settings, "ground_elevation_input")
+        box.label(text="输入默认 mm；X/Y/Z 锁轴；Tab 切换候选")
 
         box = layout.box()
         box.label(text="精确空间线驱动", icon="IPO_LINEAR")

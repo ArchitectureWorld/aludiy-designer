@@ -17,6 +17,7 @@ from .vendor.aludiy_core import Project, parse_distance_mm
 from .vendor.aludiy_core.geometry import derive_member_mesh
 from .vendor.aludiy_core.movement import movement_node_ids, preview_move
 from .vendor.aludiy_core.errors import ValidationError
+from .vendor.aludiy_core.snapping import node_candidates, ground_candidate, preview_reconnect
 
 _ACTIVE = None
 _KEYMAPS = []
@@ -97,8 +98,15 @@ def update_preview_geometry(scene, project, affected_ids):
         if not obj.get('aludiy_managed'):
             continue
         eid, kind = runtime.entity_id_from_object(obj), obj.get('aludiy_entity_type')
-        if kind == 'NODE' and eid in project.nodes:
-            obj.location = scene_adapter._mm_to_m(project.nodes[eid].position_mm)
+        if kind == 'NODE':
+            if eid in project.nodes:
+                obj.location = scene_adapter._mm_to_m(project.nodes[eid].position_mm)
+            elif (_ACTIVE is not None and getattr(_ACTIVE,'_scene',None)==scene
+                  and _ACTIVE._snap is not None and _ACTIVE._snap.node_id in project.nodes):
+                # Hiding a selected source would deselect it in Blender and break
+                # the next G after cancellation. Keep its cache/selection alive
+                # at the candidate target until the real commit rebuilds it.
+                obj.location = scene_adapter._mm_to_m(project.nodes[_ACTIVE._snap.node_id].position_mm)
         elif eid in affected and kind in {'MEMBER_AXIS','MEMBER_SOLID'}:
             obj.matrix_world = Matrix.Identity(4)
             if kind == 'MEMBER_AXIS':
@@ -245,6 +253,9 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
     delta_mm: FloatVectorProperty(name='位移 (mm)', size=3, default=(0,0,0))
     detach: BoolProperty(name='断开选中杆端', default=False)
     target_json: StringProperty(default='', options={'HIDDEN'})
+    snap_target_node_id: StringProperty(default='', options={'HIDDEN'})
+    snap_anchor_node_id: StringProperty(default='', options={'HIDDEN'})
+    connect_only: BoolProperty(name='点选连接目标', default=False, options={'HIDDEN','SKIP_SAVE'})
 
     @classmethod
     def poll(cls, context):
@@ -255,8 +266,15 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
         try:
             original = runtime.get_project(context.scene)
             spec = json.loads(self.target_json) if self.target_json else target_spec(context)
-            result = preview_move(original,self.delta_mm,detach=self.detach,**spec)
+            if self.snap_target_node_id:
+                anchor = self.snap_anchor_node_id or movement_node_ids(original, **spec)[0]
+                result = preview_reconnect(original, self.delta_mm, detach=self.detach,
+                    anchor_node_id=anchor, target_node_id=self.snap_target_node_id, **spec)
+            else:
+                result = preview_move(original,self.delta_mm,detach=self.detach,**spec)
             if not result.moved_node_ids:
+                runtime.settings(context.scene).move_connection_mode='KEEP'
+                runtime.set_status(context.scene,'位置与连接未改变')
                 return {'CANCELLED'}
             from .operators import _commit_project_update
             selected_id = (result.detached_node_id or (result.moved_node_ids[0] if spec.get('endpoint') or spec.get('node_ids')
@@ -264,6 +282,9 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
             _commit_project_update(context,original,result.project,selected_entity_id=selected_id)
             # Preserve multiselection after reconstruction; useful for consecutive moves.
             wanted = set(spec.get('member_ids',())) | set(spec.get('node_ids',()))
+            if self.snap_target_node_id and self.snap_anchor_node_id in wanted:
+                wanted.discard(self.snap_anchor_node_id)
+                wanted.add(self.snap_target_node_id)
             if spec.get('endpoint'):
                 owner,side = spec['endpoint']; _select_endpoint(context,owner,side)
             elif wanted:
@@ -271,7 +292,9 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
                     if o.get('aludiy_managed'):
                         o.select_set(runtime.entity_id_from_object(o) in wanted)
             runtime.settings(context.scene).move_connection_mode = 'KEEP'
-            runtime.set_status(context.scene, f'{"已断开杆端并移动" if self.detach else "保持连接移动"} · 更新 {len(result.affected_member_ids)} 根 · Ctrl+Z 撤销')
+            message = (f'已连接到 {self.snap_target_node_id}' if self.snap_target_node_id else
+                       ('已断开杆端并移动' if self.detach else '保持连接移动'))
+            runtime.set_status(context.scene, f'{message} · 更新 {len(result.affected_member_ids)} 根 · Ctrl+Z 撤销')
             return {'FINISHED'}
         except Exception as exc:
             self.report({'WARNING'}, str(exc))
@@ -288,10 +311,25 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
             self._raw = runtime.settings(context.scene).project_json
             ids = movement_node_ids(self._original,**self._spec)
             self._target_ids = set(ids)
-            self._origin = Vector(self._original.nodes[ids[0]].position_mm)
+            # For whole/group moves use the selected endpoint closest to the
+            # invocation cursor, not the lexicographically first project node.
+            mouse = Vector((event.mouse_x-self._region.x,event.mouse_y-self._region.y))
+            rv = self._area.spaces.active.region_3d
+            projected = [(nid,view3d_utils.location_3d_to_region_2d(self._region,rv,
+                Vector(self._original.nodes[nid].position_mm)*.001,default=None)) for nid in ids]
+            nearest = [(float((point-mouse).length),nid) for nid,point in projected if point is not None]
+            self._anchor_id = min(nearest)[1] if nearest else ids[0]
+            self._origin = Vector(self._original.nodes[self._anchor_id].position_mm)
+            self.snap_anchor_node_id = self._anchor_id
+            self.snap_target_node_id = ''
+
             self._start_mouse = (event.mouse_x-self._region.x,event.mouse_y-self._region.y)
             # N-panel button activation waits for a cursor location in the viewport.
             self._waiting = context.region.type != 'WINDOW' or not (0 <= self._start_mouse[0] < self._region.width and 0 <= self._start_mouse[1] < self._region.height)
+            if self.connect_only:
+                if not self._spec.get('endpoint'):
+                    raise ValidationError('先选择型材的起端或终端，再点选连接目标')
+                self._waiting = False
             self._mouse = self._start_mouse
             self._axis = None
             self._plane_lock = False
@@ -302,6 +340,12 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
             self._affected = set()
             self._closed = False
             self._snap = None
+            self._snap_options = ()
+            self._snap_choice = 0
+            self._choice_keys = ()
+            self._free = bool(event.ctrl)
+            self._ground = (parse_distance_mm(runtime.settings(self._scene).ground_elevation_input)
+                            if runtime.settings(self._scene).ground_snap_enabled else None)
             self._navigating = False
             self._needs_rebase = False
             self._screen_normal = context.area.spaces.active.region_3d.view_rotation @ Vector((0,0,1))
@@ -350,32 +394,61 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
         except ValidationError:
             self._pointer_start = None
 
+    def _project_point(self, point):
+        p = view3d_utils.location_3d_to_region_2d(self._region,
+            self._area.spaces.active.region_3d,Vector(point)*.001,default=None)
+        return tuple(p) if p is not None else None
+
     def _snap_delta(self, context, delta):
         self._snap = None
-        if self._typed:
+        if self._free:
+            self._snap_options = ()
             return delta
-        # Snap to stationary project nodes by pixels, excluding moved endpoints.
-        p = self._original
-        candidates = []
-        rv=self._area.spaces.active.region_3d
-        cursor=Vector(self._mouse)
-        for nid,node in p.nodes.items():
-            if nid in self._target_ids: continue
-            pos=Vector(node.position_mm)
-            d=pos-self._origin
-            if self._axis:
-                k='XYZ'.index(self._axis)
-                if self._plane_lock and abs(d[k])>1e-5: continue
-                if not self._plane_lock and any(abs(d[i])>1e-5 for i in range(3) if i!=k): continue
-            projected=view3d_utils.location_3d_to_region_2d(self._region,rv,pos*.001,default=None)
-            if projected is not None:
-                distance=(projected-cursor).length
-                if distance<=runtime.settings(self._scene).snap_pixel_radius:
-                    candidates.append((distance,nid,d))
-        if candidates:
-            _,self._snap,d=min(candidates,key=lambda v:(v[0],v[1]))
-            return d
+        excluded = set(self._target_ids)
+        if self.detach and self._spec.get('endpoint'):
+            owner = self._spec['endpoint'][0]
+            if any(m.id!=owner and self._anchor_id in (m.start_node_id,m.end_node_id)
+                   for m in self._original.members.values()):
+                excluded.discard(self._anchor_id)
+        exact = tuple(self._origin+delta) if self._typed else None
+        cursor = self._project_point(exact) if exact is not None else self._mouse
+        if cursor is None:
+            self._snap_options = ()
+            return delta
+        options = node_candidates(self._original,origin_mm=tuple(self._origin),
+            cursor_px=cursor,project_point=self._project_point,excluded_node_ids=excluded,
+            radius_px=runtime.settings(self._scene).snap_pixel_radius,
+            axis=self._axis,plane_lock=self._plane_lock,exact_position_mm=exact)
+        # Endpoints win over the ground. Midpoints/slots are intentionally not
+        # advertised as connected until persistent host relationships exist.
+        if not options and self._ground is not None and not self._typed and not self.connect_only:
+            ground = ground_candidate(tuple(self._origin),tuple(self._origin+delta),
+                ground_mm=self._ground,project_point=self._project_point,
+                radius_px=runtime.settings(self._scene).snap_pixel_radius,
+                axis=self._axis,plane_lock=self._plane_lock)
+            if ground:
+                options = (ground,)
+        keys = tuple(c.key for c in options)
+        if keys != self._choice_keys:
+            self._snap_choice = 0
+        self._choice_keys, self._snap_options = keys, options
+        if options:
+            self._snap = options[self._snap_choice % len(options)]
+            # Exact typed displacement is never silently rounded.
+            return delta if self._typed else Vector(self._snap.position_mm)-self._origin
         return delta
+
+    def _snap_label(self):
+        if self._free:
+            return 'Ctrl 自由移动 · 不吸附，不新建连接'
+        if self._typed and self._snap is None:
+            return '精确输入优先 · 未命中节点，不新建连接'
+        if self._snap is not None:
+            suffix = f' · Tab 切换 {self._snap_choice % len(self._snap_options)+1}/{len(self._snap_options)}' if len(self._snap_options)>1 else ''
+            if self._snap.kind=='NODE':
+                return f'端点 {self._snap.node_id} · 确认后连接'+suffix
+            return f'地面 Z={self._ground:g} mm · 仅定位，不建立约束'
+        return '吸附开启 · 靠近端点可连接；按住 Ctrl 自由移动'
 
     def _update(self, context):
         if self._waiting: return
@@ -387,26 +460,36 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
                 else:
                     direction=self._last_direction
                 delta=direction*distance
+            elif self.connect_only:
+                delta=Vector((0,0,0))
             else:
                 if self._pointer_start is None: self._rebase_pointer(context)
                 if self._pointer_start is None:
                     raise ValidationError('当前方向无法用鼠标定位；输入距离或切换观察方向')
                 delta=self._pointer_value(self._mouse)-self._pointer_start
-                delta=self._snap_delta(context,delta)
                 if delta.length>1e-6: self._last_direction=delta.normalized()
-            candidate=preview_move(self._original,delta,detach=self.detach,**self._spec)
+            delta=self._snap_delta(context,delta)
+            if self.connect_only and (self._snap is None or self._snap.kind!='NODE'):
+                raise ValidationError('点选一个工程端点作为连接目标（Tab 切换重合候选）')
+            if self._snap is not None and self._snap.kind=='NODE':
+                candidate=preview_reconnect(self._original,delta,anchor_node_id=self._anchor_id,
+                    target_node_id=self._snap.node_id,detach=self.detach,**self._spec)
+            else:
+                candidate=preview_move(self._original,delta,detach=self.detach,**self._spec)
             self._affected.update(candidate.affected_member_ids)
             update_preview_geometry(self._scene,candidate.project,self._affected)
             self._candidate, self._delta = candidate, Vector(delta)
             self._error=''
         except Exception as exc:
             self._error=str(exc)
+            self._candidate=None
+            update_preview_geometry(self._scene,self._original,self._affected)
         self._feedback(context)
 
     def _feedback(self, context):
         mode='断开选中杆端' if self.detach else '保持连接'
         axis=('排除 '+self._axis if self._plane_lock else self._axis) if self._axis else '屏幕平面'
-        message=f'G · {mode} · {axis} | Δ {self._delta.x:.1f}, {self._delta.y:.1f}, {self._delta.z:.1f} mm | X/Y/Z 锁轴 · Enter 确认 · Esc 取消'
+        message=f'G · {mode} · {axis} · 源 {self._anchor_id} | {self._snap_label()} | Δ {self._delta.x:.1f}, {self._delta.y:.1f}, {self._delta.z:.1f} mm | Enter 确认 · Esc 取消'
         if self._error: message='不可提交：'+self._error
         if self._waiting: message='把鼠标移入视窗，左键确定移动起点；Esc 取消'
         self._area.header_text_set(message)
@@ -418,6 +501,12 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
             self.cancel(context); return {'CANCELLED'}
         if context.scene!=self._scene or runtime.settings(self._scene).project_json!=self._raw:
             self.cancel(context); return {'CANCELLED'}
+        free = bool(event.ctrl)
+        if free != self._free:
+            self._free = free
+            self._update(context)
+        if event.type in {'LEFT_CTRL','RIGHT_CTRL'}:
+            return {'RUNNING_MODAL'}
         if event.type == 'MIDDLEMOUSE':
             self._navigating = event.value != 'RELEASE'
             self._needs_rebase = True
@@ -441,6 +530,11 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
                 self._update(context)
             return {'RUNNING_MODAL'}
         if event.value!='PRESS': return {'RUNNING_MODAL'}
+        if event.type == 'TAB':
+            if len(self._snap_options)>1:
+                self._snap_choice = (self._snap_choice + (-1 if event.shift else 1)) % len(self._snap_options)
+                self._update(context)
+            return {'RUNNING_MODAL'}
         if event.type in {'X','Y','Z'}:
             plane=bool(event.shift)
             self._axis = None if self._axis==event.type and self._plane_lock==plane else event.type
@@ -453,11 +547,13 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
                 self._waiting=False; self._start_mouse=self._mouse=mouse
                 self._rebase_pointer(context); self._feedback(context)
                 return {'RUNNING_MODAL'}
-            if self._error or self._candidate is None:
-                self._update(context)
-                if self._error or self._candidate is None: return {'RUNNING_MODAL'}
+            # Re-evaluate modifiers and candidates on the confirmation event;
+            # this prevents a stale target surviving Ctrl press/release.
+            self._update(context)
+            if self._error or self._candidate is None: return {'RUNNING_MODAL'}
             # Discard visual preview before executing one undoable engineering edit.
             self.delta_mm=tuple(self._delta)
+            self.snap_target_node_id = (self._snap.node_id or '') if self._snap is not None and not self._free else ''
             self._restore_and_close(context)
             return self.execute(context)
         if event.type=='BACK_SPACE':
@@ -527,14 +623,22 @@ def _draw_handles():
             mode='断开选中杆端' if op.detach else '保持连接'
             axis=(('排除 ' if op._plane_lock else '')+op._axis) if op._axis else '屏幕平面'
             from . import view_sync
-            if view_sync.is_line_view_context(ctx):
+            if ctx.area == op._area or view_sync.is_line_view_context(ctx):
                 x=72 if ctx.space_data.show_region_toolbar else 14
                 top=ctx.region.height-58
-                ov._filled_rect(x,top-88,min(490,ctx.region.width-x-14),88,(.035,.045,.065,.94))
-                ov._text(x+12,top-24,f'G 移动 · {mode} · {axis}',size=16)
+                ov._filled_rect(x,top-112,min(590,ctx.region.width-x-14),112,(.035,.045,.065,.94))
+                ov._text(x+12,top-24,f'G 移动 · {mode} · {axis} · 源 {op._anchor_id}',size=14)
                 ov._text(x+12,top-49,f'ΔX {op._delta.x:.1f}   ΔY {op._delta.y:.1f}   ΔZ {op._delta.z:.1f} mm',size=13)
                 ov._text(x+12,top-74,op._error or (f'输入：{op._typed}' if op._typed else 'X/Y/Z 锁轴 · 左键/Enter 确认 · Esc 取消'),size=12,
                          color=(1,.45,.25,1) if op._error else ov.TEXT_COLOR)
+                ov._text(x+12,top-99,op._snap_label(),size=12)
+            if op._snap is not None:
+                sp=ov._project(op._snap.position_mm)
+                if sp is not None:
+                    color=(1,.4,.2,1) if op._error else ((.2,1,.55,1) if op._snap.kind=='NODE' else (.25,.7,1,1))
+                    _disc(sp,10,(1,1,1,1)); _disc(sp,7,color)
+                    text=op._snap_label() if not op._error else '不可连接：'+op._error
+                    ov._text(sp.x+15,sp.y-24,text,size=12,color=color)
             candidate=op._candidate.project if op._candidate else op._original
             for mid in op._affected:
                 m=candidate.members[mid]
@@ -556,7 +660,9 @@ def register_services():
     wm=bpy.context.window_manager
     if wm and wm.keyconfigs.addon and not _KEYMAPS:
         km=wm.keyconfigs.addon.keymaps.new(name='Object Mode',space_type='EMPTY')
-        _KEYMAPS.append((km,km.keymap_items.new('aludiy.move_engineering',type='G',value='PRESS',head=True)))
+        move_key=km.keymap_items.new('aludiy.move_engineering',type='G',value='PRESS',head=True)
+        move_key.properties.connect_only=False
+        _KEYMAPS.append((km,move_key))
         km=wm.keyconfigs.addon.keymaps.new(name='3D View',space_type='VIEW_3D')
         _KEYMAPS.append((km,km.keymap_items.new('aludiy.pick_endpoint',type='LEFTMOUSE',value='PRESS',head=True)))
         _KEYMAPS.append((km,km.keymap_items.new('aludiy.hover_endpoint',type='MOUSEMOVE',value='ANY',head=True)))
