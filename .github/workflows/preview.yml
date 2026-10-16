@@ -9,7 +9,7 @@ on:
       source_sha:
         description: "Full commit SHA to publish for Blender experience testing"
         required: false
-        default: "3c6e5bc2e745fe8c1d63608d2d29060eadb6fb40"
+        default: "b6573c427e75a029dfde29f754b7c38c0d0ac527"
 
 # Preview is a test channel. Publishing it does not merge the feature PR.
 permissions:
@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: false
 env:
   BLENDER_VERSION: "5.2.2"
-  PREVIEW_SOURCE_SHA: "3c6e5bc2e745fe8c1d63608d2d29060eadb6fb40"
+  PREVIEW_SOURCE_SHA: "b6573c427e75a029dfde29f754b7c38c0d0ac527"
 
 jobs:
   build:
@@ -92,6 +92,9 @@ jobs:
           "$BLENDER" --command extension validate "dist/$PACKAGE"
           if test -f tools/blender_movement_test.py; then
             "$BLENDER" --background --factory-startup --python-exit-code 1 --python tools/blender_movement_test.py
+          fi
+          if test -f tools/blender_snap_test.py; then
+            "$BLENDER" --background --factory-startup --python-exit-code 1 --python tools/blender_snap_test.py
           fi
           "$BLENDER" --command extension server-generate --repo-dir="$GITHUB_WORKSPACE/site" --html
           python - <<'PY'
