@@ -1,0 +1,59 @@
+name: Apply Verified Workspace Synchronization Fix
+on:
+  push:
+    branches: ["fix/v0.1.13-workspace-sync"]
+    paths: [".github/workflows/apply-workspace0113.yml"]
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Verify complete patch before applying
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64,hashlib,lzma,pathlib
+          parts=sorted(pathlib.Path('bootstrap/workspace0113').glob('part*'))
+          assert len(parts)==3
+          encoded=b''.join(b''.join(p.read_bytes().split()) for p in parts)
+          assert len(encoded)==23868,len(encoded)
+          packed=base64.b64decode(encoded,validate=True)
+          digest=hashlib.sha256(packed).hexdigest()
+          assert digest=='db083d50e257cea0c588a9ed3c290591279a0b379fc112940dd290adf2e489b8',digest
+          patch=lzma.decompress(packed)
+          assert len(patch)==66568
+          pathlib.Path('/tmp/workspace0113.patch').write_bytes(patch)
+          print('COMPLETE_PATCH_VERIFIED',digest)
+          PY
+          git apply --check /tmp/workspace0113.patch
+          git apply /tmp/workspace0113.patch
+      - name: Source regression and deterministic package builds
+        run: |
+          set -euo pipefail
+          python -m pip install pytest
+          python tools/sync_core_into_extension.py
+          pytest -q
+          python -m compileall -q src extension tools
+          python tools/build_extension.py
+          P="$(python tools/release_meta.py package-name)"
+          cp "dist/$P" "$RUNNER_TEMP/first.zip"
+          python tools/build_extension.py
+          cmp "$RUNNER_TEMP/first.zip" "dist/$P"
+      - name: Commit complete fix and remove transport
+        run: |
+          set -euo pipefail
+          rm -rf bootstrap/workspace0113
+          rm .github/workflows/apply-workspace0113.yml
+          git restore extension/aludiy_designer/resources/profile_catalog.sqlite
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'fix: v0.1.13 deferred workspace setup and complete projection sync'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git rev-parse HEAD >> "$GITHUB_STEP_SUMMARY"
