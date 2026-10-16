@@ -181,12 +181,17 @@ def member_candidates(project: Project, *, origin_mm, cursor_px, project_point,
     not a claim that the physical slot or outside face has been fitted.
     """
     result=[];excluded=set(excluded_member_ids)
+    ray_origin_mm = _vector3(ray_origin_mm, 'ray origin')
+    d = _vector3(ray_direction, 'ray direction')
+    dn = math.sqrt(sum(v*v for v in d))
+    if dn <= 1e-12:
+        raise ValidationError('视线方向无效，无法计算杆身候选')
+    d = tuple(v/dn for v in d)
     for mid,m in project.members.items():
         if mid in excluded: continue
         a=project.nodes[m.start_node_id].position_mm;b=project.nodes[m.end_node_id].position_mm
         u=tuple(b[i]-a[i] for i in range(3));r=tuple(ray_origin_mm[i]-a[i] for i in range(3))
-        d=tuple(float(v) for v in ray_direction); dn=math.sqrt(sum(v*v for v in d))
-        d=tuple(v/dn for v in d); uu=sum(v*v for v in u);ud=sum(u[i]*d[i] for i in range(3))
+        uu=sum(v*v for v in u);ud=sum(u[i]*d[i] for i in range(3))
         denominator=uu-ud*ud
         if uu<=1e-12: continue
         t=(sum(u[i]*r[i] for i in range(3))-ud*sum(d[i]*r[i] for i in range(3)))/denominator if denominator>1e-9 else .5
@@ -196,7 +201,10 @@ def member_candidates(project: Project, *, origin_mm, cursor_px, project_point,
             if ts:t=ts[0]
         if exact_position_mm is not None:
             t=sum((exact_position_mm[i]-a[i])*u[i] for i in range(3))/uu
-        for station,kind in ((.5,'MIDPOINT'),(max(0.0,min(1.0,t)),'AXIS')):
+        stations = [(0.5, 'MIDPOINT')]
+        if denominator > 1e-9 or exact_position_mm is not None or (axis is not None and ts):
+            stations.append((max(0.0, min(1.0, t)), 'AXIS'))
+        for station, kind in stations:
             if not 1e-8<station<1-1e-8:continue
             point=tuple(a[i]+station*u[i] for i in range(3))
             if not allowed_position(origin_mm,point,axis,plane_lock):continue
@@ -209,3 +217,109 @@ def member_candidates(project: Project, *, origin_mm, cursor_px, project_point,
     # A midpoint has priority only in its own aperture. End nodes are considered
     # first by the caller, avoiding an ambiguous endpoint/body weld.
     return tuple(sorted(result,key=lambda c:(c.distance_px,0 if c.kind=='MIDPOINT' else 1,c.member_id)))
+
+
+def engineering_candidates(project: Project, *, origin_mm, cursor_px,
+                           project_point: Projection, ray_origin_mm, ray_direction,
+                           excluded_node_ids=(), excluded_member_ids=(), radius_px=14.0,
+                           axis=None, plane_lock=False, exact_position_mm=None,
+                           perpendicular=True, ground_mm=None, raw_position_mm=None,
+                           nodes_only=False) -> tuple[SnapCandidate, ...]:
+    """One geometry-only candidate pipeline for drawing and moving.
+
+    Semantic points have priority within the pixel aperture: endpoint, midpoint,
+    perpendicular foot, nearest axis station. Tab can still reach every target.
+    Co-located *different* nodes/members are never merged or silently hidden.
+    """
+    options = list(node_candidates(
+        project, origin_mm=origin_mm, cursor_px=cursor_px, project_point=project_point,
+        excluded_node_ids=excluded_node_ids, radius_px=radius_px, axis=axis,
+        plane_lock=plane_lock, exact_position_mm=exact_position_mm))
+    excluded_members = set(excluded_member_ids)
+    if not nodes_only:
+        options.extend(member_candidates(
+            project, origin_mm=origin_mm, cursor_px=cursor_px, project_point=project_point,
+            ray_origin_mm=ray_origin_mm, ray_direction=ray_direction,
+            excluded_member_ids=excluded_members, radius_px=radius_px, axis=axis,
+            plane_lock=plane_lock, exact_position_mm=exact_position_mm))
+        if perpendicular:
+            for mid, member in project.members.items():
+                if mid in excluded_members:
+                    continue
+                a = project.nodes[member.start_node_id].position_mm
+                b = project.nodes[member.end_node_id].position_mm
+                u = tuple(b[i] - a[i] for i in range(3))
+                uu = sum(v*v for v in u)
+                if uu <= 1e-12:
+                    continue
+                t = sum((origin_mm[i]-a[i])*u[i] for i in range(3))/uu
+                # A foot on the extension is not a point on this physical member.
+                if not 1e-8 < t < 1-1e-8:
+                    continue
+                point = tuple(a[i]+t*u[i] for i in range(3))
+                if not allowed_position(origin_mm, point, axis, plane_lock):
+                    continue
+                if exact_position_mm is not None and math.dist(point, exact_position_mm) > JOIN_TOLERANCE_MM:
+                    continue
+                screen = project_point(point)
+                if screen is not None:
+                    distance = math.dist(cursor_px, screen)
+                    if distance <= radius_px:
+                        options.append(SnapCandidate('PERPENDICULAR', point, distance, None, mid, t))
+    priority = {'NODE': 0, 'MIDPOINT': 1, 'PERPENDICULAR': 2, 'AXIS': 3, 'GROUND': 4}
+    ordered = sorted(options, key=lambda c: (priority[c.kind], c.distance_px, c.key))
+    result = []
+    for candidate in ordered:
+        if candidate.member_id and any(
+            other.member_id == candidate.member_id and
+            math.dist(other.position_mm, candidate.position_mm) <= JOIN_TOLERANCE_MM
+            for other in result
+        ):
+            continue
+        result.append(candidate)
+    if (not result and not nodes_only and ground_mm is not None and
+            raw_position_mm is not None and exact_position_mm is None):
+        ground = ground_candidate(origin_mm, raw_position_mm, ground_mm=ground_mm,
+                                  project_point=project_point, radius_px=radius_px,
+                                  axis=axis, plane_lock=plane_lock)
+        if ground:
+            result.append(ground)
+    return tuple(result)
+
+
+def describe_candidate(candidate: SnapCandidate | None, project: Project) -> str:
+    """Both overlays describe the same physical reference, never claim a join."""
+    if candidate is None:
+        return '吸附开启 · 端点 / 中点 / 垂足 / 杆身 · 仅定位'
+    if candidate.kind == 'NODE':
+        return f'端点 {candidate.node_id} · 仅定位，不自动关联'
+    if candidate.member_id:
+        member = project.members[candidate.member_id]
+        a = project.nodes[member.start_node_id].position_mm
+        b = project.nodes[member.end_node_id].position_mm
+        length = math.dist(a, b)
+        label = {'MIDPOINT': '中点', 'PERPENDICULAR': '垂足', 'AXIS': '杆身轴线'}[candidate.kind]
+        return (f'{label} {candidate.member_id} · 距起端 {(candidate.station or 0)*length:.1f}'
+                f' / {length:.1f} mm · 仅定位')
+    return f'地面 Z={candidate.position_mm[2]:g} mm · 仅定位，不建立约束'
+
+
+def resolve_draw_endpoint(start_mm, current_mm, typed_text='', *, axis=None,
+                          work_plane='XY') -> Vector3 | None:
+    """Keep coordinates as Python doubles; Blender vectors are display-only."""
+    from .units import parse_length_mm, parse_polar
+    from .drawing import polar_endpoint_mm
+    if start_mm is None or current_mm is None or not typed_text:
+        return current_mm
+    if typed_text.startswith('@'):
+        polar = parse_polar(typed_text)
+        return polar_endpoint_mm(start_mm, work_plane, polar.length_mm, polar.angle_deg)
+    length = parse_length_mm(typed_text)
+    difference = tuple(current_mm[i] - start_mm[i] for i in range(3))
+    if axis:
+        k = 'XYZ'.index(axis)
+        direction = tuple((-1.0 if difference[k] < 0.0 else 1.0) if i == k else 0.0 for i in range(3))
+    else:
+        norm = math.sqrt(sum(v*v for v in difference))
+        direction = tuple(v/norm for v in difference) if norm > 1e-9 else (1.0, 0.0, 0.0)
+    return tuple(start_mm[i] + direction[i]*length for i in range(3))
