@@ -341,6 +341,7 @@ class Project:
     nodes: dict[str, Node] = field(default_factory=dict)
     members: dict[str, Member] = field(default_factory=dict)
     associations: dict[str, Any] = field(default_factory=dict)
+    joints: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         self.project_id = _non_empty(self.project_id, "project.project_id")
@@ -396,6 +397,8 @@ class Project:
         for node_id in removed_node_ids:
             self.nodes.pop(node_id, None)
 
+        self.joints = {key: j for key, j in self.joints.items()
+                       if j.host_member_id not in normalized and j.branch_member_id not in normalized}
         self.associations = {key: r for key, r in self.associations.items()
                              if not (r.host_member_id in normalized
                                      or r.follower_node_id in removed_node_ids
@@ -407,8 +410,10 @@ class Project:
         )
 
     def validate(self) -> None:
-        if self.schema_version not in {"0.1.0", "0.2.0", "0.3.0"}:
+        if self.schema_version not in {"0.1.0", "0.2.0", "0.3.0", "0.4.0"}:
             raise ValidationError("Unsupported project schema; use a compatible extension")
+        from .joints import validate_joints
+        validate_joints(self)
         from .associations import validate_associations
         validate_associations(self)
         seen = set(self.nodes)
@@ -431,8 +436,10 @@ class Project:
             "nodes": [self.nodes[key].to_dict() for key in sorted(self.nodes)],
             "members": [self.members[key].to_dict() for key in sorted(self.members)],
         }
-        if self.associations or self.schema_version in {"0.2.0", "0.3.0"}:
+        if self.associations or self.schema_version in {"0.2.0", "0.3.0", "0.4.0"}:
             payload["associations"] = [self.associations[k].to_dict() for k in sorted(self.associations)]
+        if self.joints or self.schema_version == "0.4.0":
+            payload["joints"] = [self.joints[k].to_dict() for k in sorted(self.joints)]
         return payload
 
     @classmethod
@@ -452,6 +459,12 @@ class Project:
             if relation.id in project.associations:
                 raise DuplicateIdError(f"duplicate association id {relation.id}")
             project.associations[relation.id] = relation
+        from .joints import ButtJoint
+        for item in payload.get("joints", []):
+            joint = ButtJoint.from_dict(item)
+            if joint.id in project.joints:
+                raise DuplicateIdError(f"duplicate joint id {joint.id}")
+            project.joints[joint.id] = joint
         project.validate()
         return project
 

@@ -1,3 +1,9 @@
+## 0.1.16-alpha
+- Consolidate slot targets, live association counts and Create/Unlink controls in the section inset. Stop positioning explicitly preserves constraints; exact-slot unlink releases actual ON_SLOT edges after confirmation without touching other slots.
+- Preserve native Undo/Redo for inset data mutations via checked next-event top-level operator dispatch; reject stale/mixed selections and clean callbacks on load/disable.
+- Add explicit orthogonal L/T square-cut processing: branch cutbacks, L host end extension, end gaps, derived BOX/PROFILE geometry, distinct design/body-reference lengths and guarded reference CSV export. Processing never becomes a hidden movement constraint.
+- First joint record uses schema0.4; existing0.1/0.2/0.3 files/associations preserved. No mitres, vendor manufacturing or structural-safety claims.
+
 ## 0.1.15-alpha
 - Direct section slot hover/picking and local target pin/clear controls; preserve full selection and block modeling click-through.
 - Read-only current/expanded selected lengths above workspace controls; live G/drawing preview; remove persistent reference dimensions from line view.

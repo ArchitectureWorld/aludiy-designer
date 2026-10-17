@@ -29,6 +29,10 @@ def draw_selection_readout(layout, context):
     """Read the same candidate as the viewports; never write a project on draw."""
     info=selection_info(context);s=settings(context.scene)
     layout.label(text='当前选择',icon='RESTRICT_SELECT_OFF')
+    from . import joint_tools
+    body=joint_tools.solution(context)
+    if body and body.issues:
+        layout.label(text='交接待处理 · 退让暂停 / 禁止出料',icon='ERROR')
     mids,nids=info['member_ids'],info['node_ids']
     if mids or nids:
         layout.label(text=f'已选 {len(mids)} 根型材 / {len(nids)} 个节点')
@@ -41,6 +45,10 @@ def draw_selection_readout(layout, context):
         end={'START':' · 起端','END':' · 终端'}.get(info['endpoint'],'')
         layout.label(text=f'当前 {mid}{end} · {profile.section.width_mm:g}×{profile.section.height_mm:g} mm')
         layout.label(text=f"设计线长度  {info['length_mm']:.3f} mm")
+        if body and not body.issues:
+            item=body.lengths[mid]
+            layout.label(text=f"实体参考长度  {item.cut_length_mm:.3f} mm")
+            layout.label(text=f"起/终端退让  {item.start_setback_mm:g} / {item.end_setback_mm:g} mm")
     elif len(nids)==1:
         nid,xyz=info['node_coordinates'][0]
         layout.label(text=f'节点 {nid}')
@@ -90,6 +98,8 @@ class ALUDIY_PT_main(bpy.types.Panel):
 
         from . import profile_tools
         profile_tools.draw_panel(layout, context)
+        from . import joint_tools
+        joint_tools.draw_panel(layout, context)
 
         box = layout.box()
         box.label(text="移动与端点", icon="EMPTY_ARROWS")
@@ -100,7 +110,7 @@ class ALUDIY_PT_main(bpy.types.Panel):
             member = project.members[ep[0]]
             nid = member.start_node_id if ep[1] == "START" else member.end_node_id
             count = sum(nid in (m.start_node_id, m.end_node_id) for m in project.members.values())
-            box.label(text=f"{ep[0]} · {'起端' if ep[1] == 'START' else '终端'} · 关联 {count} 根")
+            box.label(text=f"{ep[0]} · {'起端' if ep[1] == 'START' else '终端'} · 节点共用 {count} 根（含自身）")
             box.prop(scene_settings, "move_connection_mode", expand=True)
             if scene_settings.move_connection_mode == "DETACH":
                 box.label(text="仅断开这根型材的这一端", icon="UNLINKED")

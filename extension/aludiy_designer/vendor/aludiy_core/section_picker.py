@@ -42,11 +42,16 @@ class SectionLayout:
     pin_rect: Rect
     clear_rect: Rect
     ui_scale: float
+    create_rect: Rect
+    unlink_rect: Rect
+    unlink_slot_rect: Rect
 
     def hit(self, point):
         if not self.rect.contains(point):
             return None
-        for name, rect in (('PIN',self.pin_rect),('CLEAR',self.clear_rect)):
+        for name, rect in (('PIN',self.pin_rect),('CLEAR',self.clear_rect),
+                           ('CREATE',self.create_rect),('UNLINK_SELECTED',self.unlink_rect),
+                           ('UNLINK_SLOT',self.unlink_slot_rect)):
             if rect.contains(point):
                 return name, ''
         nearby = [(math.dist(s.center,point),s.interface_id) for s in self.slots
@@ -74,8 +79,8 @@ def section_layout(section, roll_deg, *, region_width, region_height,
     def rotate(uv):return cs*uv[0]-sn*uv[1], sn*uv[0]+cs*uv[1]
     outline=tuple(rotate(uv) for uv in section_outline_uv(section,detailed=True))
     span=max((max(abs(a),abs(b)) for a,b in outline),default=1)
-    diagram_scale=min((w-88*scale_ui)/2,48*scale_ui)/max(span,1)
-    cx,cy=x+w/2,y+180*scale_ui
+    diagram_scale=min((w-88*scale_ui)/2,35*scale_ui)/max(span,1)
+    cx,cy=x+w/2,y+196*scale_ui
     def screen(uv):
         u,v=rotate(uv)
         return cx+diagram_scale*u,cy+diagram_scale*v
@@ -95,8 +100,11 @@ def section_layout(section, roll_deg, *, region_width, region_height,
         slots.append(SlotHit(slot.id,pt,radius,label,Rect(tx,ty,lw,lh)))
     button_w=(w-30*scale_ui)/2
     return SectionLayout(Rect(x,y,w,h),(cx,cy),ring,tuple(slots),
-        Rect(x+10*scale_ui,y+22*scale_ui,button_w,27*scale_ui),
-        Rect(x+20*scale_ui+button_w,y+22*scale_ui,button_w,27*scale_ui),scale_ui)
+        Rect(x+10*scale_ui,y+55*scale_ui,button_w,24*scale_ui),
+        Rect(x+20*scale_ui+button_w,y+55*scale_ui,button_w,24*scale_ui),scale_ui,
+        Rect(x+10*scale_ui,y+29*scale_ui,button_w,24*scale_ui),
+        Rect(x+20*scale_ui+button_w,y+29*scale_ui,button_w,24*scale_ui),
+        Rect(x+10*scale_ui,y+3*scale_ui,w-20*scale_ui,24*scale_ui))
 
 
 def selection_readout(project, member_ids, node_ids, *, active_member=None, endpoint=None):

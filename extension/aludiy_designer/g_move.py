@@ -93,6 +93,8 @@ def update_preview_geometry(scene, project, affected_ids):
     shows the new point without inserting an orphan node into the live scene.
     """
     affected = set(affected_ids)
+    # Processing can change bodies whose design endpoints did not move.
+    affected.update(mid for j in project.joints.values() for mid in (j.host_member_id,j.branch_member_id))
     catalog = runtime.get_catalog()
     mode = runtime.settings(scene).solid_display_mode
     derived = {mid: derive_member_mesh(project, mid, catalog, mode=mode) for mid in affected}
@@ -155,7 +157,7 @@ def _select_endpoint(context, owner, side):
     s.endpoint_member_id, s.endpoint_side = owner, side
     s.move_connection_mode = 'KEEP'
     count = sum(nid in (r.start_node_id,r.end_node_id) for r in p.members.values())
-    runtime.set_status(context.scene, f'{owner} {"起端" if side=="START" else "终端"} · {nid} · 关联 {count} 根；G 移动')
+    runtime.set_status(context.scene, f'{owner} {"起端" if side=="START" else "终端"} · {nid} · 节点共用 {count} 根（含自身）；G 移动')
     _redraw()
 
 
@@ -709,6 +711,10 @@ def _draw_selection(context,ov):
         if pt is not None:
             _disc(pt,10,(1,1,1,1) if nid==active else (.2,.8,1,1))
             _disc(pt,6,(.08,.18,.22,1))
+    if p.joints:
+        from .vendor.aludiy_core.joints import solve_cutbacks
+        if solve_cutbacks(p,runtime.get_catalog()).issues:
+            ov._text(72,98,'交接待处理：退让暂停，请调整或清除交接',size=12,color=(1,.5,.2,1))
     # Mark manual and legacy relationships separately from selection.
     relation_points=set()
     for r in p.associations.values():

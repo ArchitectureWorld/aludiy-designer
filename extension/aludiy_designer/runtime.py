@@ -13,7 +13,7 @@ from .vendor.aludiy_core import ProfileCatalog, Project
 
 CATALOG_REVISION = "alpha-2026.10"
 PROJECT_SCHEMA_VERSION = "0.1.0"
-EXTENSION_VERSION = "0.1.15-alpha"
+EXTENSION_VERSION = "0.1.16-alpha"
 WORKSPACE_NAME = "ALU DIY"
 AXIS_COLLECTION = "ALUDIY_AXES"
 SOLID_COLLECTION = "ALUDIY_SOLIDS"
@@ -66,6 +66,7 @@ def _solid_display_mode_updated(_self: Any, context: bpy.types.Context | None) -
 
 
 class AluDIYSceneSettings(bpy.types.PropertyGroup):
+    joint_gap_input: bpy.props.StringProperty(name="端面间隙 mm", default="0", description="直角端面对接的非负端面间隙，按毫米解析")
     show_selection_lengths: bpy.props.BoolProperty(name="展开各杆件长度", default=False,
         description="查看完整多选集合的各根设计线长度，不是组总长")
     slot_target_member_id: bpy.props.StringProperty(default='', options={'HIDDEN','SKIP_SAVE'})
