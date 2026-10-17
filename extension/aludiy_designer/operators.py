@@ -835,6 +835,9 @@ class ALUDIY_OT_draw_member(bpy.types.Operator):
         if context.scene != self._scene:
             self.cancel(context)
             return {'CANCELLED'}
+        from . import profile_tools
+        if profile_tools.modal_inset_guard(context,event):
+            return {'RUNNING_MODAL'}
         free = bool(event.ctrl)
         if free != self._free:
             self._free = free

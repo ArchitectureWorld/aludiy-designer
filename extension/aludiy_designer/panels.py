@@ -16,6 +16,48 @@ from .runtime import (
 from .vendor.aludiy_core import member_length_mm
 
 
+
+def selection_info(context):
+    from . import profile_tools
+    from .vendor.aludiy_core.section_picker import selection_readout
+    mids,nids=g_move.selection_summary(context)
+    return selection_readout(g_move.display_project(context.scene),mids,nids,
+        active_member=profile_tools.active_inspector_member(context),endpoint=g_move.endpoint_context(context))
+
+
+def draw_selection_readout(layout, context):
+    """Read the same candidate as the viewports; never write a project on draw."""
+    info=selection_info(context);s=settings(context.scene)
+    layout.label(text='当前选择',icon='RESTRICT_SELECT_OFF')
+    mids,nids=info['member_ids'],info['node_ids']
+    if mids or nids:
+        layout.label(text=f'已选 {len(mids)} 根型材 / {len(nids)} 个节点')
+    else:
+        layout.label(text='未选择型材或工程节点')
+    mid=info['active_member']
+    if mid:
+        p=g_move.display_project(context.scene);m=p.members[mid]
+        profile=get_catalog().get(m.profile_type_id)
+        end={'START':' · 起端','END':' · 终端'}.get(info['endpoint'],'')
+        layout.label(text=f'当前 {mid}{end} · {profile.section.width_mm:g}×{profile.section.height_mm:g} mm')
+        layout.label(text=f"设计线长度  {info['length_mm']:.3f} mm")
+    elif len(nids)==1:
+        nid,xyz=info['node_coordinates'][0]
+        layout.label(text=f'节点 {nid}')
+        for axis,value in zip('XYZ',xyz):layout.label(text=f'{axis}  {value:.3f} mm')
+    if len(mids)>1:
+        layout.prop(s,'show_selection_lengths',text='各杆件长度',emboss=False,
+                    icon='TRIA_DOWN' if s.show_selection_lengths else 'TRIA_RIGHT')
+        if s.show_selection_lengths:
+            for member,length in info['lengths']:
+                layout.label(text=f'{member}   {length:.3f} mm')
+    from . import operators
+    op=operators._ACTIVE_DRAW
+    if op is not None and op._scene==context.scene and op._start_mm is not None and op._display_point is not None:
+        import math
+        layout.label(text=f'正在绘制  {math.dist(op._start_mm,op._display_point):.3f} mm')
+
+
 class ALUDIY_PT_main(bpy.types.Panel):
     bl_label = "AluDIY 设计"
     bl_idname = "ALUDIY_PT_main"
@@ -38,6 +80,8 @@ class ALUDIY_PT_main(bpy.types.Panel):
                     warning.label(text=item)
 
         box = layout.box()
+        draw_selection_readout(box, context)
+        box.separator()
         row = box.row(align=True)
         row.operator("aludiy.setup_workspace", icon="WORKSPACE")
         row.operator("aludiy.new_project", icon="FILE_NEW")

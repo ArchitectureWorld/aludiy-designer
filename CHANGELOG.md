@@ -1,3 +1,8 @@
+## 0.1.15-alpha
+- Direct section slot hover/picking and local target pin/clear controls; preserve full selection and block modeling click-through.
+- Read-only current/expanded selected lengths above workspace controls; live G/drawing preview; remove persistent reference dimensions from line view.
+- Shared DPI-aware layout for rendering and hit tests; retain all slot-attachment, precision and workspace behavior. No schema change.
+
 # 0.1.14-alpha
 
 - 指定语义槽轨目标，G/画线共用有限槽轨定位，吸附不自动关联。

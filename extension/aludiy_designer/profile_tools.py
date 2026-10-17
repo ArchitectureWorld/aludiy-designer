@@ -1,5 +1,6 @@
-"""Batch section edits and read-only slot inspection for both engineering views."""
+"""Batch section edits and directly selectable slot inspection in both views."""
 import math
+from types import SimpleNamespace
 import bpy
 from bpy.props import EnumProperty, StringProperty
 from . import runtime, g_move, scene_adapter, selection_state
@@ -8,6 +9,7 @@ from .vendor.aludiy_core.geometry import derive_member_mesh, section_outline_uv
 from .vendor.aludiy_core.errors import ValidationError
 
 _DRAW_HANDLE = None
+_CURSOR_BY_WINDOW = {}
 
 
 def selected_members(context):
@@ -16,11 +18,14 @@ def selected_members(context):
 
 
 def active_inspector_member(context):
-    mid = runtime.active_member_id(context)
-    if mid:
-        return mid
+    # Local Collections can hide the selected node/alias in the other viewport.
+    # Use the same view-layer selection as engineering G, not area visibility.
+    mids, _ = g_move.selection_summary(context)
+    active = runtime.entity_id_from_object(context.view_layer.objects.active)
+    if active in mids:
+        return active
     ep = g_move.endpoint_context(context)
-    return ep[0] if ep else None
+    return ep[0] if ep else (sorted(mids)[0] if mids else None)
 
 
 def selected_slot(scene, member_id, project):
@@ -99,7 +104,9 @@ class ALUDIY_OT_inspect_profile_slot(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return context.mode == 'OBJECT' and g_move._ACTIVE is None and bool(active_inspector_member(context))
+        from . import operators
+        return (context.mode == 'OBJECT' and g_move._ACTIVE is None
+                and operators._ACTIVE_DRAW is None and bool(active_inspector_member(context)))
 
     def execute(self, context):
         mid = active_inspector_member(context)
@@ -145,11 +152,7 @@ def draw_panel(layout, context):
         box.label(text=f'所选角度：{next(iter(rolls)):g}°' if len(rolls)==1 else f'当前角度 {m.roll_deg % 360:g}° · 多选角度可不同')
         box.prop(s, 'show_section_inspector')
         active = selected_slot(context.scene, mid, project)
-        grid = box.grid_flow(row_major=True, columns=2, even_columns=True, even_rows=True, align=True)
-        for slot in sorted(profile.section.interfaces.values(),key=lambda x:x.id):
-            face = slot.host_face_id.replace('FACE_P','+').replace('FACE_N','−')
-            op = grid.operator('aludiy.inspect_profile_slot', text=f'{face} · 槽 {slot.lane_index+1}/{slot.lane_count}', depress=slot.id==active)
-            op.interface_id=slot.id
+        box.label(text='直接点击截面小窗的槽口选择')
         row=box.row();row.enabled=bool(active)
         row.operator('aludiy.set_slot_target',text='设为槽轨定位目标',icon='SNAP_EDGE')
     else:
@@ -161,84 +164,180 @@ def draw_panel(layout, context):
     slot_tools.draw_panel(layout,context)
 
 
+def inspector_layout(context, project=None):
+    """Return the exact visible geometry, or None (also no hit area)."""
+    c = context
+    if not (c.area and c.area.type == 'VIEW_3D' and c.region
+            and c.region.type == 'WINDOW' and c.workspace
+            and c.workspace.name == runtime.WORKSPACE_NAME and c.mode == 'OBJECT'):
+        return None
+    settings = runtime.settings(c.scene)
+    if not settings.show_section_inspector or not settings.project_json:
+        return None
+    mid = active_inspector_member(c)
+    project = project if project is not None else g_move.display_project(c.scene)
+    if mid not in project.members:
+        return None
+    profile = runtime.get_catalog().get(project.members[mid].profile_type_id)
+    from .vendor.aludiy_core.section_picker import section_layout
+    right = c.region.width
+    sidebar = next((r for r in c.area.regions if r.type == 'UI'), None)
+    if c.space_data.show_region_ui and sidebar and sidebar.width > 1:
+        right = min(right, sidebar.x-c.region.x)
+    toolbar = next((r for r in c.area.regions if r.type == 'TOOLS'), None)
+    left = max(0,toolbar.x+toolbar.width-c.region.x) if toolbar and c.space_data.show_region_toolbar else 0
+    geometry = section_layout(profile.section, project.members[mid].roll_deg,
+        region_width=c.region.width, region_height=c.region.height,
+        visible_right=right, toolbar_width=left, ui_scale=c.preferences.system.ui_scale or c.preferences.view.ui_scale)
+    return (SimpleNamespace(member_id=mid, project=project, profile=profile, layout=geometry)
+            if geometry is not None else None)
+
+
+def _busy():
+    from . import operators
+    return g_move._ACTIVE is not None or operators._ACTIVE_DRAW is not None
+
+
+def record_pointer(context, event):
+    if context.window:
+        _CURSOR_BY_WINDOW[context.window.as_pointer()] = (event.mouse_x, event.mouse_y)
+
+
+def hovered_slot(context, view):
+    if not view or _busy() or not context.window:
+        return None
+    point = _CURSOR_BY_WINDOW.get(context.window.as_pointer())
+    if point is None:
+        return None
+    hit = view.layout.hit((point[0]-context.region.x,point[1]-context.region.y))
+    return hit[1] if hit and hit[0] == 'SLOT' else None
+
+
+def inset_event_hit(context, event):
+    """Modal operators retain their invocation area; locate the actual mouse area."""
+    if not context.window or context.workspace.name != runtime.WORKSPACE_NAME:
+        return None
+    record_pointer(context, event)
+    for area in context.window.screen.areas:
+        if area.type != 'VIEW_3D':
+            continue
+        region = g_move._window_region(area)
+        if not region or not (region.x <= event.mouse_x < region.x+region.width
+                              and region.y <= event.mouse_y < region.y+region.height):
+            continue
+        with context.temp_override(window=context.window,area=area,region=region):
+            view = inspector_layout(bpy.context)
+        if view:
+            hit = view.layout.hit((event.mouse_x-region.x,event.mouse_y-region.y))
+            if hit:
+                return area, region, view, hit
+    return None
+
+
+def handle_inspector_click(context, event):
+    target = inset_event_hit(context, event)
+    if not target:
+        return False
+    area, region, view, (action, sid) = target
+    # Consume empty/disabled parts too: never select the model behind the card.
+    if not _busy():
+        with context.temp_override(window=context.window,area=area,region=region):
+            if action == 'SLOT':
+                bpy.ops.aludiy.inspect_profile_slot(interface_id=sid)
+            elif action == 'PIN' and bpy.ops.aludiy.set_slot_target.poll():
+                bpy.ops.aludiy.set_slot_target()
+            elif action == 'CLEAR' and runtime.settings(context.scene).slot_target_member_id:
+                bpy.ops.aludiy.clear_slot_target()
+    g_move._redraw()
+    return True
+
+
+def modal_inset_guard(context, event):
+    """An in-flight modeling transaction cannot click through or retarget the card.
+
+    Esc/right-click cancellation is handled by callers first. Ctrl/navigation
+    stay available; move the cursor back to the model before continuing input.
+    """
+    if event.type in {'ESC','RIGHTMOUSE','LEFT_CTRL','RIGHT_CTRL','MIDDLEMOUSE',
+                      'WHEELUPMOUSE','WHEELDOWNMOUSE','TRACKPADPAN','TRACKPADZOOM','TIMER'}:
+        return False
+    hit = inset_event_hit(context, event)
+    if hit:
+        hit[0].tag_redraw()
+    return hit is not None
+
+
 def _draw_inspector():
     c = bpy.context
-    if not (c.area and c.area.type=='VIEW_3D' and c.region and c.region.type=='WINDOW'
-            and c.region_data and c.workspace.name==runtime.WORKSPACE_NAME):
-        return
-    s = runtime.settings(c.scene)
-    if not s.show_section_inspector or not s.project_json:
-        return
-    mid = active_inspector_member(c)
-    if not mid:
-        return
     from . import viewport_overlay as ov
     import gpu
     try:
-        p=g_move.display_project(c.scene)
-        if mid not in p.members:return
-        member=p.members[mid];profile=runtime.get_catalog().get(member.profile_type_id)
-        section=profile.section;angle=math.radians(member.roll_deg)
-        cs,sn=math.cos(angle),math.sin(angle)
-        def rotate(uv):return (cs*uv[0]-sn*uv[1],sn*uv[0]+cs*uv[1])
-        outline=tuple(rotate(uv) for uv in section_outline_uv(section,detailed=True))
-        # Keep the inset left of the N panel, even when region overlap is enabled.
-        sidebar = next((r for r in c.area.regions if r.type=='UI'),None)
-        visible_right=c.region.width
-        if c.space_data.show_region_ui and sidebar and sidebar.width>1:
-            visible_right=min(visible_right,sidebar.x-c.region.x)
-        available=visible_right-20-(60 if c.space_data.show_region_toolbar else 0)
-        if available<175 or c.region.height<340:return
-        w=min(235,available);h=268;x=visible_right-w-12;y=c.region.height-h-18
+        view = inspector_layout(c)
+        if view is None:
+            return
+        s=runtime.settings(c.scene);mid=view.member_id;p=view.project
+        member=p.members[mid];section=view.profile.section;lay=view.layout
+        x,y,w,h=lay.rect.x,lay.rect.y,lay.rect.width,lay.rect.height;u=lay.ui_scale
         gpu.state.blend_set('ALPHA')
-        ov._filled_rect(x,y,w,h,(.035,.045,.055,.94))
-        ov._text(x+10,y+h-22,f'{mid} · 截面 / 测试目录',size=12)
-        ov._text(x+10,y+h-42,f'U {section.width_mm:g} × V {section.height_mm:g} mm · {member.roll_deg%360:g}°',size=12)
-        ov._text(x+10,y+h-60,'终端看向起端 · 相对 0° 基准',size=10)
-        span=max(max(abs(a) for a,b in outline),max(abs(b) for a,b in outline),1)
-        scale=min((w-78)/2,55)/span;cx=x+w*.5;cy=y+124
-        def local(uv):
-            u,v=rotate(uv);return (cx+scale*u,cy+scale*v)
-        ring=[(cx+scale*u,cy+scale*v) for u,v in outline]
+        ov._filled_rect(x,y,w,h,(.035,.045,.055,.96))
+        ov._text(x+10*u,y+h-22*u,f'{mid} · 点击截面选槽',size=12*u)
+        ov._text(x+10*u,y+h-42*u,f'U {section.width_mm:g} × V {section.height_mm:g} mm · {member.roll_deg%360:g}°',size=12*u)
+        ov._text(x+10*u,y+h-60*u,'终端看向起端 · 相对 0° 基准',size=10*u)
         points=[]
-        for i in range(len(ring)):points.extend([ring[i],ring[(i+1)%len(ring)]])
-        ov._polyline(points,color=(.85,.93,1,1),width=1.4)
-        sid=selected_slot(c.scene,mid,p)
-        for slot in section.interfaces.values():
-            pt=local(slot.center_uv_mm);active=slot.id==sid
-            color=(1,.72,.1,1) if active else (.2,.78,1,1)
-            g_move._disc(pt,4.3 if active else 2.5,color)
-            pos=tuple(slot.center_uv_mm[i]+slot.outward_normal_uv[i]*7/scale for i in range(2))
-            tx,ty=local(pos);face=slot.host_face_id.replace('FACE_P','+').replace('FACE_N','−')
-            label=f'{face}.{slot.lane_index+1}'
-            u,v=rotate(slot.outward_normal_uv)
-            if u<-.1:tx-=30
-            if v<-.1:ty-=10
-            ov._text(tx,ty,label,size=9,color=color)
-        ov._text(x+10,y+38,'检查只读；设为目标可定位',size=10)
-        ov._text(x+10,y+22,sid or '点击右侧槽位按钮查看',size=11,color=(1,.75,.25,1) if sid else ov.TEXT_COLOR)
-        ov._text(x+10,y+7,'槽形为示意，非制造级截面',size=9)
-        if sid:
+        for i in range(len(lay.outline)):
+            points.extend([lay.outline[i],lay.outline[(i+1)%len(lay.outline)]])
+        ov._polyline(points,color=(.85,.93,1,1),width=1.4*u)
+        sid=selected_slot(c.scene,mid,p);hover=hovered_slot(c,view)
+        for slot in lay.slots:
+            active=slot.interface_id==sid;hot=slot.interface_id==hover
+            color=(1,.72,.1,1) if active else ((.65,.94,1,1) if hot else (.2,.78,1,1))
+            if hot:
+                g_move._disc(slot.center,8*u,(.15,.5,.65,.5))
+            g_move._disc(slot.center,(4.5 if active or hot else 3)*u,color)
+            ov._text(slot.label_rect.x,slot.label_rect.y+3*u,slot.label,size=9*u,color=color)
+        disabled=_busy()
+        ov._text(x+10*u,y+79*u,'操作中：先确认或取消' if disabled else '仅选择；关联仍需手动创建',size=10*u)
+        ov._text(x+10*u,y+62*u,hover or sid or '点击槽口或旁边的编号',size=10*u,
+                 color=(1,.75,.25,1) if sid else ov.TEXT_COLOR)
+        for rect,label,enabled in ((lay.pin_rect,'用于吸附',bool(sid) and not disabled),
+                                   (lay.clear_rect,'清除目标',bool(s.slot_target_member_id) and not disabled)):
+            ov._filled_rect(rect.x,rect.y,rect.width,rect.height,(.17,.27,.34,1) if enabled else (.09,.12,.15,1))
+            ov._text(rect.x+10*u,rect.y+9*u,label,size=11*u,
+                     color=ov.TEXT_COLOR if enabled else (.42,.48,.51,1))
+        ov._text(x+10*u,y+7*u,'测试目录 · 非制造级截面',size=9*u)
+        # A pinned rail has its own overlay; don't paint it twice.
+        same_target=(s.slot_target_member_id==mid and s.slot_target_interface_id==sid)
+        if sid and not same_target:
             rail=next(r for r in interface_rails(p,mid,runtime.get_catalog()) if r.interface_id==sid)
             a,b=ov._project(rail.start_mm),ov._project(rail.end_mm)
             if a is not None and b is not None:
                 ov._polyline([tuple(a),tuple(b)],color=(1,.67,.1,1),width=3)
-                center=(a+b)*.5
-                ov.draw_snap_marker(tuple(center),color=(1,.72,.1,1))
+                ov.draw_snap_marker(tuple((a+b)*.5),color=(1,.72,.1,1))
     except Exception as exc:
         print(f'AluDIY section inspector: {exc}')
     finally:
         gpu.state.blend_set('NONE')
 
 
+@bpy.app.handlers.persistent
+def _clear_pointer_on_load(_dummy):
+    _CURSOR_BY_WINDOW.clear()
+
+
 def register_services():
     global _DRAW_HANDLE
+    _CURSOR_BY_WINDOW.clear()
+    if _clear_pointer_on_load not in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.append(_clear_pointer_on_load)
     if _DRAW_HANDLE is None:
         _DRAW_HANDLE=bpy.types.SpaceView3D.draw_handler_add(_draw_inspector,(), 'WINDOW','POST_PIXEL')
 
 
 def unregister_services():
     global _DRAW_HANDLE
+    _CURSOR_BY_WINDOW.clear()
+    if _clear_pointer_on_load in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_clear_pointer_on_load)
     if _DRAW_HANDLE is not None:
         bpy.types.SpaceView3D.draw_handler_remove(_DRAW_HANDLE,'WINDOW');_DRAW_HANDLE=None
 
