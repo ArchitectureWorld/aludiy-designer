@@ -223,6 +223,9 @@ class ALUDIY_OT_pick_endpoint(bpy.types.Operator):
                 and _ACTIVE is None and bool(engineering_objects(context)))
 
     def invoke(self, context, event):
+        from . import profile_tools
+        if profile_tools.handle_inspector_click(context,event):
+            return {'FINISHED'}
         if event.shift or event.ctrl or event.alt: return {'PASS_THROUGH'}
         region = _window_region(context.area)
         cursor = Vector((event.mouse_x-region.x,event.mouse_y-region.y))
@@ -240,11 +243,15 @@ class ALUDIY_OT_hover_endpoint(bpy.types.Operator):
     bl_options = {'INTERNAL'}
     @classmethod
     def poll(cls, context):
-        return ALUDIY_OT_pick_endpoint.poll(context)
+        return (context.workspace is not None and context.workspace.name==runtime.WORKSPACE_NAME
+                and context.mode=='OBJECT' and hasattr(context.scene,'aludiy_settings'))
     def invoke(self, context, event):
+        from . import profile_tools
+        profile_tools.record_pointer(context,event)
         region = _window_region(context.area)
-        _MOUSE[context.area.as_pointer()] = (event.mouse_x-region.x,event.mouse_y-region.y)
-        context.area.tag_redraw()
+        if context.area and context.area.type=='VIEW_3D' and region:
+            _MOUSE[context.area.as_pointer()] = (event.mouse_x-region.x,event.mouse_y-region.y)
+        _redraw()
         return {'PASS_THROUGH'}
 
 
@@ -505,6 +512,9 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
             self.cancel(context); return {'CANCELLED'}
         if context.scene!=self._scene or runtime.settings(self._scene).project_json!=self._raw:
             self.cancel(context); return {'CANCELLED'}
+        from . import profile_tools
+        if profile_tools.modal_inset_guard(context,event):
+            return {'RUNNING_MODAL'}
         free = bool(event.ctrl)
         if free != self._free:
             self._free = free
@@ -793,8 +803,9 @@ def register_services():
         move_key.properties.connect_only=False
         _KEYMAPS.append((km,move_key))
         km=wm.keyconfigs.addon.keymaps.new(name='3D View',space_type='VIEW_3D')
-        _KEYMAPS.append((km,km.keymap_items.new('aludiy.pick_endpoint',type='LEFTMOUSE',value='PRESS',head=True)))
-        _KEYMAPS.append((km,km.keymap_items.new('aludiy.hover_endpoint',type='MOUSEMOVE',value='ANY',head=True)))
+        _KEYMAPS.append((km,km.keymap_items.new('aludiy.pick_endpoint',type='LEFTMOUSE',value='PRESS',any=True,head=True)))
+        km=wm.keyconfigs.addon.keymaps.new(name='Window',space_type='EMPTY')
+        _KEYMAPS.append((km,km.keymap_items.new('aludiy.hover_endpoint',type='MOUSEMOVE',value='ANY',any=True,head=True)))
     if _DRAW_HANDLE is None and not bpy.app.background:
         _DRAW_HANDLE=bpy.types.SpaceView3D.draw_handler_add(_draw_handles,(),'WINDOW','POST_PIXEL')
 

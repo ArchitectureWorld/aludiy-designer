@@ -350,10 +350,8 @@ def _draw_direction_overlay() -> None:
                 [START_COLOR, END_COLOR],
                 size=point_size,
             )
-        if selected_id:
-            _draw_member_reference_dimension(project, selected_id)
-        elif selected_node_id:
-            _draw_node_coordinate_reference(project, selected_node_id)
+        # Persistent measurements belong in the top sidebar readout, not on
+        # top of selected members/slot rails. Drawing/G feedback stays dynamic.
     except Exception as exc:
         print(f"AluDIY direction overlay warning: {exc}")
     finally:
