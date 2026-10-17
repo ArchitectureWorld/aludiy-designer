@@ -1,113 +1,44 @@
-> Preview 0.1.15: 截面小窗直接选槽、用于吸附/清除目标；长度信息移到顶部侧栏。详见 [验收说明](docs/acceptance/v0.1.15-alpha.md)。数据关系规则不变。
+# AluDIY Designer · 0.1.16-alpha Preview
 
-# AluDIY Designer · 0.1.14 Preview
+面向DIY家居铝型材的Blender线驱动设计工具。设计线、节点、型材目录、位置关联和实体加工规则独立管理；左右线/体视窗同步。目标验收版本为Blender5.2.2 LTS。
 
-本轮进入槽轨定位与显式附着。使用已有更新源直接更新，安装ZIP仅作备用。体验步骤见 `docs/acceptance/v0.1.14-alpha.md`；首次槽轨关联升级数据为0.3.0，请另存副本，不要用旧插件覆盖。槽位仍是语义测试目录，不是制造级节点或结构验算。
+本版：**截面槽轨控制台、明确解关联、L/T直角交接与自动退让首版**。吸附只定位，关联仍手动创建；加工规则只改变实体，不移动设计轴线。
 
-## 最新 Preview：0.1.13-alpha
+[体验验收](docs/acceptance/v0.1.16-alpha.md) · [可视化开发进度](docs/progress/index.html) · [验证记录](docs/verification/v0.1.16.md) · [变更历史](CHANGELOG.md)
 
-双视窗创建/切换与投影同步修复。原 Layout 保留、自动进入 ALU DIY、重复设置不新增工作区；旧 Layout.001 不自动删除。详见 `docs/acceptance/v0.1.13-alpha.md`。
-
-## Preview 0.1.12-alpha
-
-N 面板新增“型材规格与截面朝向”。多选批量换型、±90°和绝对角度、双窗截面与稳定槽位检查。设计轴线/节点/关联保持。详见 `docs/acceptance/v0.1.12-alpha.md`。
-
-# AluDIY Designer
-
-## Latest Preview: 0.1.11-alpha
-
-Draw directly from profile midpoints and body-axis stations. Drawing and G share snap candidates, Ctrl temporary free positioning, Tab target cycling and float64 engineering coordinates. Snapping does not create associations; use the explicit multi-selection association commands.
-
-[Acceptance guide](docs/acceptance/v0.1.11-alpha.md) · [Visual progress](docs/progress/index.html) · [Implementation plan](docs/plans/v0.1.11-unified-drawing-snapping.md)
-
-
-面向 DIY 家居铝型材的线驱动设计工具。第一阶段以 Blender 5.2.x LTS 为体验式验收环境：用户精确绘制工程线，系统从独立型材目录生成联动三维体量和结构化项目数据。
-
-## G 与端点移动（0.1.7 Preview）
-
-更新后在 ALU DIY 工作区使用对象模式。选型材 → 点绿色起端或红色终端 → G → 鼠标拖动。
-主面板“移动与端点”提供保持连接／断开此杆端。G X/Y/Z 锁世界轴，输入默认 mm；Esc 或右键取消，Ctrl+Z 撤销。
-只选型材时 G 移动整杆，多选共享节点去重；普通对象的 G 仍为原生移动。混合选择明确提示分开。
-这不是通用约束求解，也不自动焊接重合节点；网格编辑、R/S 和完整工程吸附仍未接入。
-
-验收说明：[v0.1.7-alpha](docs/acceptance/v0.1.7-alpha.md)。
-
-## 当前版本
-
-`v0.1.7-alpha`
-
-已包含：
-
-- 独立于 Blender 的工程数据内核；
-- 五种测试型材及稳定槽位接口语义；
-- JSON 型材源包到 SQLite 运行目录；
-- `mm / cm / m`、安全算术和 `@长度<角度` 精确输入；
-- 固定起端、固定末端、固定中心的型材改长；
-- Blender 双视窗、完整视角/缩放联动、轴线/实体选择联动；
-- 左侧纯工程线视窗与右侧实体视窗的逐视窗集合隔离；
-- 右侧 `BOX` / 槽位语义型材细节两级显示；
-- 连续画线和样例框架；
-- 工程线起绿终红方向渐变及端点标记；
-- Rhino 式十字光标、节点吸附、坐标、长度和角度动态反馈；
-- `XY / XZ / YZ` 构造平面、首点平面偏移与 `X / Y / Z` 世界轴锁定；
-- 任意高度节点的屏幕吸附、垂直立柱和顶标高连续画线；
-- `Ctrl + Shift + Delete` 工程删除：线／实体同步删除、共享节点保留、孤立节点清理和撤销；
-- 精确节点坐标、型材起终点与 XYZ 增量平移；
-- 共享节点驱动相邻型材更新及 revision 传播；
-- 选中型材临时参考尺寸与节点坐标反馈；
-- 随版本更新的可视化开发进度看板；
-- 项目 JSON 与基础切割清单 CSV。
-
-未包含：连接求解、自动退让、供应商制造级精确 T 槽截面、板材、报价、下单及 AI。
-
-说明：逐视窗集合隔离与缩放同步已实现，但仍需在目标 Blender 5.2.2 图形界面完成实际交互验收。型材细节是目录槽位语义生成的 LOD1 交互模型，并非制造级 DXF/STEP。
-
-## 下载、安装与更新
-
-构建后使用：
-
-```text
-dist/aludiy_designer-0.1.7.zip
-```
-
-已使用远程 Preview 的用户直接刷新更新；首次安装时，在 Blender 5.2.x LTS 的 **Preferences → Extensions → Repositories** 中添加：
+## 更新
+保存工程副本，使用原更新源 Refresh Remote → AluDIY Designer → Update，无需每轮卸载重装。
 
 ```text
 https://architectureworld.github.io/aludiy-designer/index.json
 ```
 
-随后可直接 `Refresh Remote → Update`。从旧的本地 ZIP 安装迁移到远程版时，可能需要最后卸载一次旧版。完整步骤见 [`docs/acceptance/v0.1.7-alpha.md`](docs/acceptance/v0.1.7-alpha.md)。
+备用包：`dist/aludiy_designer-0.1.16.zip`。首次创建L/T交接规则使用schema0.4.0，**不要用0.1.15或更旧插件覆盖保存**；没有交接的旧工程不会自动升级。
 
-## 开发
+## 当前能力
+- 双视窗创建/复用、透视/正交/方向/平移/缩放同步；纯工程线与BOX/型材细节。
+- 工程G、端点/成组移动、mm安全数值输入、轴/平面锁定、画线/杆身/槽轨吸附。
+- 多选完整高亮、当前长度在侧栏顶部；截面直接点槽、定位目标与手动关联统一入口。
+- 节点/杆身/槽轨显式关联，解除保留位置，取消/撤销/保存重开。
+- 批量换型/截面朝向；稳定槽位语义。已有槽轨关联主杆换型需先解除，不猜接口兼容。
+- 首版正交L/T平端面退让和间隙，设计/实体参考长度分离；失效加工不锁死G，但提示待处理并禁止输出加工参考清单。
+- 结构化项目JSON与长度/退让参考CSV。
+
+“停止定位”不删除关联；“解除所选”或“解除此槽关联”才移除工程约束。“清除所选交接”只移除实体加工规则。三个动作互不冒充。
+
+## 边界
+目前仍使用五种语义测试型材，不是供应商制造级DXF/STEP。尚不包含斜切拼角、连接件选配、槽轨滑移、板材、报价/下单、结构模拟或AI。参考CSV不能直接作为生产加工单。Linux自动检查不等于Windows各显卡/DPI/插件组合已验收。
+
+## 开发与验证
 
 ```bash
 pytest -q
-python tools/build_catalog.py
 python tools/sync_core_into_extension.py
 python tools/build_extension.py
+blender --command extension validate dist/aludiy_designer-0.1.16.zip
+bash tools/verify_console_joints.sh /path/to/blender evidence
 ```
 
-核心代码位于 `src/aludiy_core/`，不得导入 `bpy`。Blender 适配层位于 `extension/aludiy_designer/`，通过稳定 ID 将工程对象映射为轴线和实体缓存。
+核心位于`src/aludiy_core/`且不得依赖bpy；适配层在`extension/aludiy_designer/`；`catalog/profiles/`为可版本化目录源，SQLite仅作编译运行目录。`tools/`包含真实Blender回归与覆盖更新脚本，`docs/acceptance/`保存各版本验收说明。
 
-## 目录结构
-
-```text
-src/aludiy_core/                 Blender 无关工程内核
-catalog/profiles/                可版本化型材源数据
-extension/aludiy_designer/       Blender 5.2 Extension
-examples/                        样例工程与切割清单
-docs/acceptance/                 体验式验收脚本
-docs/superpowers/                设计规格与实施计划
-tests/                           核心与扩展静态测试
-```
-
-## 验证状态
-
-本轮已经运行普通 Python 套件、真实 Blender 5.2.2 后台、Xvfb/XTest 窗口键鼠回归以及保存重开。Windows 用户的显卡/DPI/插件组合仍需体验验收。基础命令：
-
-```bash
-blender --background --factory-startup --python tools/blender_smoke_test.py
-```
-
-工程移动后台测试：`blender -b --factory-startup --python-exit-code 1 --python tools/blender_movement_test.py`。
-真实窗口脚本：`tools/blender_gui_move_test.py`（Linux/X11，隔离配置并关闭初始欢迎页）。
+Preview只发布测试通道；发布配置固定已测源码SHA，不自动合并开发分支或此前堆叠PR。

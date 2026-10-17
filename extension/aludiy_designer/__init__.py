@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import bpy
 
-from . import operators, g_move, panels, runtime, view_sync, profile_tools, slot_tools
+from . import operators, g_move, panels, runtime, view_sync, profile_tools, slot_tools, joint_tools
 from .vendor.aludiy_core.startup import try_optional_service
 
 bl_info = {
     "name": "AluDIY Designer",
     "author": "ArchitectureWorld",
-    "version": (0, 1, 15),
+    "version": (0, 1, 16),
     "blender": (5, 2, 0),
     "location": "View3D > Sidebar > AluDIY",
     "description": "Line-driven aluminum extrusion design with linked 3D feedback",
@@ -24,6 +24,7 @@ CLASSES = (
     *panels.CLASSES,
     *profile_tools.CLASSES,
     *slot_tools.CLASSES,
+    *joint_tools.CLASSES,
 )
 
 _OPTIONAL_SERVICE_ERRORS: list[str] = []

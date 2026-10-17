@@ -1,4 +1,5 @@
 """Explicit slot targeting; target selection never changes engineering geometry."""
+import json
 import bpy
 from . import runtime, g_move
 from .vendor.aludiy_core.associations import slot_reference
@@ -55,48 +56,89 @@ class ALUDIY_OT_set_slot_target(bpy.types.Operator):
 
 class ALUDIY_OT_clear_slot_target(bpy.types.Operator):
     bl_idname='aludiy.clear_slot_target'
-    bl_label='清除槽轨目标'
+    bl_label='停止槽轨定位（保留关联）'
     bl_description='恢复普通端点/杆身吸附；不解除任何工程关联'
     @classmethod
     def poll(cls,context):
         from . import operators
         return g_move._ACTIVE is None and operators._ACTIVE_DRAW is None
     def execute(self,context):
+        s=runtime.settings(context.scene)
+        count=len(slot_links(runtime.get_project(context.scene),s.slot_target_member_id,s.slot_target_interface_id))
         clear_target(context.scene)
-        runtime.set_status(context.scene,'已恢复普通吸附；已有槽轨关联保留')
+        runtime.set_status(context.scene,f'已停止槽轨定位；仍有 {count} 处该槽工程关联。需要独立移动请点“解除所选”或“解除此槽”')
         g_move._redraw();return {'FINISHED'}
 
 
-def draw_panel(layout,context):
-    box=layout.box();box.label(text='槽轨定位与附着',icon='SNAP_EDGE')
-    s=runtime.settings(context.scene)
-    if s.slot_target_member_id:
-        box.label(text=f'主杆 {s.slot_target_member_id} · 指定槽轨')
-        box.label(text=s.slot_target_interface_id)
-        try:target_spec(context.scene,g_move.display_project(context.scene))
-        except Exception:
-            row=box.row();row.alert=True;row.label(text='目标失效，请清除后重新指定',icon='ERROR')
-        row=box.row(align=True)
-        row.operator('aludiy.create_associations',text='创建槽轨关联',icon='LINKED')
-        row.operator('aludiy.clear_slot_target',text='清除目标',icon='X')
-        box.label(text='选端点 → G 定位 → 创建关联')
-        box.label(text='清除目标 ≠ 解除关联；Ctrl 临时自由')
-    else:
-        box.label(text='检查主杆槽位 → 设为定位目标')
-        box.label(text='相接杆件多选 → 创建关联（仅唯一匹配）')
-    box.label(text='槽轨按相对站位跟随；不校验接头适配')
-    p=g_move.display_project(context.scene);mids,nids=g_move.selection_summary(context)
-    ends=set(nids)
+def slot_links(project, host_member_id, interface_id):
+    return tuple(r for r in project.associations.values() if r.kind == 'ON_SLOT'
+                 and r.host_member_id == host_member_id
+                 and r.slot_reference.interface_id == interface_id)
+
+
+def selected_links(context, project):
+    mids, nids = g_move.selection_summary(context)
+    ends = set(nids)
     for mid in mids:
-        if mid in p.members:ends.update((p.members[mid].start_node_id,p.members[mid].end_node_id))
-    linked=[r for r in p.associations.values() if r.kind=='ON_SLOT' and
-            (r.host_member_id in mids or r.follower_node_id in ends)]
-    if linked:
-        box.label(text=f'相关槽轨关联 {len(linked)} 处',icon='LINKED')
-        for r in linked[:3]:
-            box.label(text=f'{r.follower_node_id} → {r.host_member_id} · {r.station*100:g}%')
-            box.label(text=r.slot_reference.interface_id)
-        box.operator('aludiy.remove_associations',text='解除所选关联（保留位置）')
+        if mid in project.members:
+            m = project.members[mid]; ends.update((m.start_node_id, m.end_node_id))
+    return tuple(r for r in project.associations.values() if
+                 (r.kind == 'COINCIDENT' and set(r.node_ids) & ends)
+                 or (r.kind in {'ON_SLOT', 'ON_MEMBER'} and
+                     (r.host_member_id in mids or r.follower_node_id in ends)))
+
+
+class ALUDIY_OT_unlink_slot(bpy.types.Operator):
+    bl_idname = 'aludiy.unlink_slot'
+    bl_label = '解除此槽工程关联'
+    bl_description = '真正解除这个主杆/槽位的全部附着端，保留设计线位置；不影响其他槽'
+    bl_options = {'REGISTER', 'UNDO'}
+    host_member_id: bpy.props.StringProperty(options={'SKIP_SAVE'})
+    interface_id: bpy.props.StringProperty(options={'SKIP_SAVE'})
+    expected_links: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def poll(cls, context):
+        from . import profile_tools
+        return context.mode == 'OBJECT' and not profile_tools._busy()
+
+    def _links(self, context):
+        return slot_links(runtime.get_project(context.scene), self.host_member_id, self.interface_id)
+
+    def invoke(self, context, event):
+        try:
+            links = self._links(context)
+            if not links:
+                runtime.set_status(context.scene, '这个槽没有工程关联；不需要解除')
+                return {'CANCELLED'}
+            self.expected_links = json.dumps([r.to_dict() for r in links], sort_keys=True)
+            return context.window_manager.invoke_props_dialog(self, width=365)
+        except Exception as exc:
+            self.report({'WARNING'}, str(exc)); return {'CANCELLED'}
+
+    def draw(self, context):
+        self.layout.label(text=f'主杆 {self.host_member_id} / {self.interface_id}')
+        self.layout.label(text=f'解除这个槽上的 {len(self._links(context))} 处附着关系？', icon='UNLINKED')
+        self.layout.label(text='保留端点位置，不影响其他槽；Ctrl+Z 可恢复。')
+
+    def execute(self, context):
+        try:
+            from .vendor.aludiy_core.associations import remove_slot_associations
+            original = runtime.get_project(context.scene)
+            links = slot_links(original, self.host_member_id, self.interface_id)
+            if self.expected_links and self.expected_links != json.dumps([r.to_dict() for r in links], sort_keys=True):
+                raise ValidationError('确认期间工程关系已变化，请重新操作')
+            result = remove_slot_associations(original, host_member_id=self.host_member_id,
+                                              interface_id=self.interface_id)
+            if not result.changed_count:
+                runtime.set_status(context.scene, '这个槽没有待解除的关联'); return {'CANCELLED'}
+            # Selection context is captured/restored by the existing transaction path.
+            g_move._commit_relations(context, original, result.project, g_move.target_spec(context))
+            runtime.set_status(context.scene, f'已解除此槽 {result.changed_count} 处工程关联；位置保留，该槽约束已解除（其他已有约束仍保留）')
+            return {'FINISHED'}
+        except Exception as exc:
+            self.report({'WARNING'}, str(exc)); runtime.set_status(context.scene, str(exc))
+            return {'CANCELLED'}
 
 
 def _draw_target():
@@ -116,11 +158,10 @@ def _draw_target():
         gpu.state.blend_set('ALPHA')
         ov._polyline([tuple(a),tuple(b)],color=(1,.72,.12,1),width=3)
         ov.draw_snap_marker(tuple((a+b)*.5),color=(1,.72,.12,1))
-        ov._text(72,98,f'目标槽轨 {target[0]} / {target[1]} · 仅定位',size=12,color=(1,.82,.4,1))
+
     except (ValidationError, StopIteration):
         # Stale target is visible and cannot silently become a different interface.
-        gpu.state.blend_set('ALPHA')
-        ov._text(72,98,'槽轨目标失效：请在面板清除或重新指定',size=12,color=(1,.4,.25,1))
+        pass  # Console displays invalid targets; no floating text in model area.
     except Exception as exc:
         print(f'AluDIY slot target overlay: {exc}')
     finally:gpu.state.blend_set('NONE')
@@ -136,4 +177,4 @@ def unregister_services():
     if _HANDLE is not None:
         bpy.types.SpaceView3D.draw_handler_remove(_HANDLE,'WINDOW');_HANDLE=None
 
-CLASSES=(ALUDIY_OT_set_slot_target,ALUDIY_OT_clear_slot_target)
+CLASSES=(ALUDIY_OT_set_slot_target,ALUDIY_OT_clear_slot_target,ALUDIY_OT_unlink_slot)

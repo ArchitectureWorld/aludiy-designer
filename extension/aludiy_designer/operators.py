@@ -1007,13 +1007,13 @@ class ALUDIY_OT_import_project(bpy.types.Operator, ImportHelper):
 
 class ALUDIY_OT_export_cutlist(bpy.types.Operator, ExportHelper):
     bl_idname = "aludiy.export_cutlist"
-    bl_label = "导出基础切割清单"
+    bl_label = "导出长度 / 退让参考清单"
     filename_ext = ".csv"
     filter_glob: StringProperty(default="*.csv", options={"HIDDEN"})
 
     def execute(self, context):
         try:
-            write_cutlist_csv(get_project(context.scene), self.filepath)
+            write_cutlist_csv(get_project(context.scene), self.filepath, get_catalog())
         except Exception as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}

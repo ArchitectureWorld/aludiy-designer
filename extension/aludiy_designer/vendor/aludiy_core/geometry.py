@@ -195,12 +195,20 @@ def derive_member_mesh(
     envelope = derive_member_envelope(project, member_id, catalog)
     profile = catalog.get(envelope.profile_type_id)
     outline = section_outline_uv(profile.section, detailed=mode == "PROFILE")
+    start, end = envelope.start_mm, envelope.end_mm
+    if project.joints:
+        from .joints import solve_cutbacks
+        length = solve_cutbacks(project, catalog).lengths[member_id]
+        # Pending rules deliberately show unprocessed design geometry; UI warns.
+        if length.cut_length_mm is not None:
+            start = _add(start, _scale(envelope.axis_direction, length.start_setback_mm))
+            end = _sub(end, _scale(envelope.axis_direction, length.end_setback_mm))
     start_ring = tuple(
-        _world_section_point(envelope.start_mm, envelope.u_axis, envelope.v_axis, uv)
+        _world_section_point(start, envelope.u_axis, envelope.v_axis, uv)
         for uv in outline
     )
     end_ring = tuple(
-        _world_section_point(envelope.end_mm, envelope.u_axis, envelope.v_axis, uv)
+        _world_section_point(end, envelope.u_axis, envelope.v_axis, uv)
         for uv in outline
     )
     count = len(outline)

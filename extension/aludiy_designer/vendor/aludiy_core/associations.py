@@ -226,7 +226,7 @@ def create_associations(project, *, member_ids=(), node_ids=(), catalog=None):
         signatures.add(_signature(r));count+=1
     if not proposals: raise ValidationError('选中对象没有有效接合处；先吸附到端点或杆身轴线，再创建关联')
     if count and q.schema_version=='0.1.0': q.schema_version='0.2.0'
-    if any(r.kind=='ON_SLOT' for r in q.associations.values()): q.schema_version='0.3.0'
+    if q.schema_version != '0.4.0' and any(r.kind=='ON_SLOT' for r in q.associations.values()): q.schema_version='0.3.0'
     q.validate()
     return AssociationChange(q,count)
 
@@ -289,7 +289,7 @@ def attachment_position(project, relation, positions=None):
             raise ValidationError('只有槽轨关联可携带槽引用')
         return point
     ref = relation.slot_reference
-    if project.schema_version != '0.3.0' or ref is None:
+    if project.schema_version not in {'0.3.0', '0.4.0'} or ref is None:
         raise ValidationError('槽轨关联需要 0.3.0 数据格式和完整接口引用')
     if h.profile_type_id != ref.profile_type_id or h.anchor_ref != 'PROFILE_ORIGIN':
         raise ValidationError('主杆已换型或截面基准不匹配，请先解除槽轨关联并重新指定')
@@ -364,6 +364,26 @@ def create_slot_associations(project, catalog, *, host_member_id, interface_id,
         while f'R-{i:03d}' in q.associations:i+=1
         q.associations[f'R-{i:03d}']=replace(r,id=f'R-{i:03d}')
         signatures.add(_signature(r));count+=1
-    q.schema_version='0.3.0'
+    if q.schema_version != '0.4.0': q.schema_version='0.3.0'
     q.validate()
     return AssociationChange(q,count)
+
+
+def remove_slot_associations(project, *, host_member_id, interface_id):
+    """Remove the exact slot's attachment edges, not merely a viewport target.
+
+    All followers on this slot are released. Other slots, coincident groups and
+    owned endpoint IDs/positions are preserved. The UI confirms this scope.
+    """
+    if host_member_id not in project.members:
+        raise ValidationError('待解除槽轨的主杆不存在')
+    if not interface_id:
+        raise ValidationError('请先选择需要解除的具体槽位')
+    q = Project.from_dict(project.to_dict())
+    ids = [rid for rid, r in q.associations.items()
+           if r.kind == 'ON_SLOT' and r.host_member_id == host_member_id
+           and r.slot_reference.interface_id == interface_id]
+    for rid in ids:
+        del q.associations[rid]
+    q.validate()
+    return AssociationChange(q, len(ids))
