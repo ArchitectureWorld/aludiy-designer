@@ -1,3 +1,8 @@
+## 0.1.17-alpha — blank-panel hotfix
+- Make project reads side-effect-free, including the first draw on an untouched scene. Only explicit edits/imports write project JSON.
+- Keep setup and save-copy/import recovery controls visible when project data cannot be decoded; do not clear or replace the original payload.
+- Add native cold-start Panel.draw regressions without precreated project data, empty scene reopens and install-over-install coverage. No engineering schema or constraint change.
+
 ## 0.1.16-alpha
 - Consolidate slot targets, live association counts and Create/Unlink controls in the section inset. Stop positioning explicitly preserves constraints; exact-slot unlink releases actual ON_SLOT edges after confirmation without touching other slots.
 - Preserve native Undo/Redo for inset data mutations via checked next-event top-level operator dispatch; reject stale/mixed selections and clean callbacks on load/disable.

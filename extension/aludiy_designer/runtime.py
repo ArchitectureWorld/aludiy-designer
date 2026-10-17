@@ -13,7 +13,7 @@ from .vendor.aludiy_core import ProfileCatalog, Project
 
 CATALOG_REVISION = "alpha-2026.10"
 PROJECT_SCHEMA_VERSION = "0.1.0"
-EXTENSION_VERSION = "0.1.16-alpha"
+EXTENSION_VERSION = "0.1.17-alpha"
 WORKSPACE_NAME = "ALU DIY"
 AXIS_COLLECTION = "ALUDIY_AXES"
 SOLID_COLLECTION = "ALUDIY_SOLIDS"
@@ -187,11 +187,14 @@ def empty_project() -> Project:
 
 
 def get_project(scene: bpy.types.Scene) -> Project:
+    """Read without mutating RNA, including first draw on an untouched scene.
+
+    Panel.draw and operator poll callbacks are read-only Blender contexts.
+    Only an explicit editing/import operator may persist through set_project.
+    """
     raw = settings(scene).project_json.strip()
     if not raw:
-        project = empty_project()
-        set_project(scene, project)
-        return project
+        return empty_project()
     payload = json.loads(raw)
     project = Project.from_dict(payload)
     from .vendor.aludiy_core.associations import validate_slot_catalog
