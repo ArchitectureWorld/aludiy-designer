@@ -1,0 +1,59 @@
+name: Apply Verified Slot Console and Joints Patch
+on:
+  push:
+    branches: ["feat/v0.1.16-slot-console-joints"]
+    paths: [".github/workflows/apply-console0116.yml"]
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Verify the entire source transfer before applying
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64, hashlib, lzma, pathlib
+          parts = sorted(pathlib.Path('bootstrap/console0116').glob('part*'))
+          assert len(parts) == 6
+          encoded = b''.join(b''.join(p.read_bytes().split()) for p in parts)
+          assert len(encoded) == 51628, len(encoded)
+          compressed = base64.b64decode(encoded, validate=True)
+          digest = hashlib.sha256(compressed).hexdigest()
+          assert digest == 'd6e9b159532d42d131111f0f91164c86b0ca177ab6e67f5627bb17aa07710118', digest
+          payload = lzma.decompress(compressed)
+          assert len(payload) == 172376, len(payload)
+          assert hashlib.sha256(payload).hexdigest() == '4911371a65b92fd2171eaf56cce9e36cc93c756904a9102b355c676623a64755'
+          pathlib.Path('/tmp/console0116.patch').write_bytes(payload)
+          print('COMPLETE_PATCH_VERIFIED', digest)
+          PY
+          git apply --check /tmp/console0116.patch
+          git apply /tmp/console0116.patch
+      - name: Run all source regressions and deterministic package build
+        run: |
+          set -euo pipefail
+          python -m pip install pytest
+          python tools/sync_core_into_extension.py
+          pytest -q
+          python -m compileall -q src extension tools
+          python tools/build_extension.py
+          P="$(python tools/release_meta.py package-name)"
+          cp "dist/$P" "$RUNNER_TEMP/first.zip"
+          python tools/build_extension.py
+          cmp "$RUNNER_TEMP/first.zip" "dist/$P"
+      - name: Commit complete implementation and remove transfer staging
+        run: |
+          set -euo pipefail
+          rm -rf bootstrap/console0116
+          rm .github/workflows/apply-console0116.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat: v0.1.16 slot console, exact unlink and orthogonal L/T cutbacks'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git rev-parse HEAD >> "$GITHUB_STEP_SUMMARY"
