@@ -66,6 +66,19 @@ def draw_selection_readout(layout, context):
         layout.label(text=f'正在绘制  {math.dist(op._start_mm,op._display_point):.3f} mm')
 
 
+def draw_project_read_error(layout, error):
+    """Keep a visible recovery path; never repair or replace data while drawing."""
+    box = layout.box()
+    box.alert = True
+    box.label(text='工程数据暂时无法读取', icon='ERROR')
+    box.label(text='原始数据未修改，请先另存副本')
+    detail = f'{type(error).__name__}: {error}'.replace('\n', ' ')
+    for offset in range(0, min(len(detail), 144), 24):
+        box.label(text=detail[offset:offset + 24])
+    layout.operator('wm.save_as_mainfile', text='另存工程副本', icon='FILE_TICK')
+    layout.operator('aludiy.import_project', text='导入有效项目副本', icon='IMPORT')
+
+
 class ALUDIY_PT_main(bpy.types.Panel):
     bl_label = "AluDIY 设计"
     bl_idname = "ALUDIY_PT_main"
@@ -88,13 +101,21 @@ class ALUDIY_PT_main(bpy.types.Panel):
                     warning.label(text=item)
 
         box = layout.box()
-        draw_selection_readout(box, context)
+        project_read_error = None
+        try:
+            draw_selection_readout(box, context)
+        except Exception as exc:
+            # A corrupt/incompatible project must not hide setup and recovery.
+            project_read_error = exc
         box.separator()
         row = box.row(align=True)
         row.operator("aludiy.setup_workspace", icon="WORKSPACE")
         row.operator("aludiy.new_project", icon="FILE_NEW")
         box.prop(scene_settings, "view_sync_mode")
         box.prop(scene_settings, "solid_display_mode")
+        if project_read_error is not None:
+            draw_project_read_error(layout, project_read_error)
+            return
 
         from . import profile_tools
         profile_tools.draw_panel(layout, context)
@@ -198,7 +219,11 @@ class ALUDIY_PT_selection(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        project = get_project(context.scene)
+        try:
+            project = get_project(context.scene)
+        except Exception as exc:
+            draw_project_read_error(layout, exc)
+            return
         node_id = active_node_id(context)
         member_id = active_member_id(context)
 
