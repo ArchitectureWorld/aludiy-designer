@@ -91,3 +91,85 @@ def preview_move(project: Project, delta_mm, *, member_ids: Iterable[str] = (),
     # A topology-only replacement must never create a collapsed physical member.
     candidate.validate()
     return MovePreview(candidate, change.moved_node_ids, change.affected_member_ids, split)
+
+
+@dataclass(frozen=True, slots=True)
+class DuplicatePreview:
+    project: Project
+    member_map: dict[str, str]
+    node_map: dict[str, str]
+    association_ids: tuple[str, ...]
+    joint_ids: tuple[str, ...]
+    dropped_external_count: int
+
+
+def duplicate_members(project: Project, member_ids: Iterable[str]) -> DuplicatePreview:
+    """Copy the selected induced engineering graph, never Blender cache identities.
+
+    Originals stay unchanged. Shared nodes within the selection are copied once;
+    explicit links and processing rules are retained only inside the copied set.
+    The result is a candidate, suitable for cancelable placement before commit.
+    """
+    from dataclasses import replace
+    ids = tuple(sorted(set(member_ids)))
+    if not ids or not set(ids).issubset(project.members):
+        raise ValidationError('请选择有效的完整型材进行工程复制')
+    q = Project.from_dict(project.to_dict())
+    used = set(q.nodes) | set(q.members) | set(q.associations) | set(q.joints)
+    counters = {}
+    def fresh(prefix):
+        number = counters.get(prefix, max((int(k[len(prefix)+1:]) for k in used
+            if k.startswith(prefix+'-') and k[len(prefix)+1:].isdigit()), default=0))
+        while True:
+            number += 1
+            value = f'{prefix}-{number:03d}'
+            if value not in used:
+                used.add(value); counters[prefix] = number
+                return value
+    source_nodes = sorted({n for mid in ids for n in
+        (project.members[mid].start_node_id, project.members[mid].end_node_id)})
+    nmap = {n: fresh('N') for n in source_nodes}
+    mmap = {m: fresh('M') for m in ids}
+    for old, new in nmap.items():
+        q.add_node(Node(new, project.nodes[old].position_mm))
+    for old, new in mmap.items():
+        member = project.members[old]
+        q.add_member(replace(member, id=new, start_node_id=nmap[member.start_node_id],
+                             end_node_id=nmap[member.end_node_id], revision=1))
+    copied_links, copied_joints = [], []
+    # A legacy shared node is an external dependency even without an explicit
+    # Association record. Report each boundary node once, not every incident rod.
+    outside_nodes = {n for mid,m in project.members.items() if mid not in mmap
+                     for n in (m.start_node_id,m.end_node_id)}
+    dropped = len(outside_nodes.intersection(nmap))
+    for old in sorted(project.associations):
+        r = project.associations[old]
+        if r.kind == 'COINCIDENT':
+            internal = tuple(nmap[n] for n in r.node_ids if n in nmap)
+            if internal and len(internal) != len(r.node_ids):
+                dropped += 1
+            if len(internal) < 2:
+                continue
+            new = replace(r, id=fresh('A'), node_ids=internal)
+        else:
+            host_in = r.host_member_id in mmap
+            follower_in = r.follower_node_id in nmap
+            if not (host_in and follower_in):
+                dropped += int(host_in or follower_in)
+                continue
+            new = replace(r, id=fresh('A'), host_member_id=mmap[r.host_member_id],
+                          follower_node_id=nmap[r.follower_node_id])
+        q.associations[new.id] = new
+        copied_links.append(new.id)
+    for old in sorted(project.joints):
+        j = project.joints[old]
+        host_in, branch_in = j.host_member_id in mmap, j.branch_member_id in mmap
+        if not (host_in and branch_in):
+            dropped += int(host_in or branch_in)
+            continue
+        new = replace(j, id=fresh('J'), host_member_id=mmap[j.host_member_id],
+                      branch_member_id=mmap[j.branch_member_id])
+        q.joints[new.id] = new
+        copied_joints.append(new.id)
+    q.validate()
+    return DuplicatePreview(q, mmap, nmap, tuple(copied_links), tuple(copied_joints), dropped)

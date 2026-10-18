@@ -25,6 +25,30 @@ def target_spec(scene, project):
     return (s.slot_target_member_id,s.slot_target_interface_id)
 
 
+def sanitize_missing_target(scene, project):
+    """Event/command boundary only: discard a deleted host's ephemeral target.
+
+    This is NOT engineering-data repair. Read-only draw callers keep target_spec;
+    schema, catalog and valid-host interface failures are still reported normally.
+    """
+    s = runtime.settings(scene)
+    mid = s.slot_target_member_id
+    if not mid or mid in project.members:
+        return False
+    clear_target(scene)
+    if s.inspected_member_id and s.inspected_member_id not in project.members:
+        s.inspected_member_id = s.inspected_profile_id = s.inspected_interface_id = ''
+    if s.endpoint_member_id and s.endpoint_member_id not in project.members:
+        s.endpoint_member_id = s.endpoint_side = ''
+    runtime.set_status(scene, '槽轨目标主杆已删除，已恢复普通吸附；其他有效工程关联保留')
+    return True
+
+
+def snapping_target(scene, project):
+    sanitize_missing_target(scene, project)
+    return target_spec(scene, project)
+
+
 class ALUDIY_OT_set_slot_target(bpy.types.Operator):
     bl_idname='aludiy.set_slot_target'
     bl_label='设为槽轨定位目标'
