@@ -12,7 +12,7 @@ def test_manifest_targets_blender_5_2_and_declares_required_metadata() -> None:
 
     assert payload["schema_version"] == "1.0.0"
     assert payload["id"] == "aludiy_designer"
-    assert payload["version"] == "0.1.5"
+    assert payload["version"] == "0.1.6"
     assert payload["type"] == "add-on"
     assert payload["blender_version_min"] == "5.2.0"
     assert payload["license"] == ["SPDX:GPL-3.0-or-later"]
@@ -20,14 +20,10 @@ def test_manifest_targets_blender_5_2_and_declares_required_metadata() -> None:
     assert not payload["tagline"].endswith(".")
 
 
-def test_profile_sources_compile_to_catalog_with_five_profiles(tmp_path: Path) -> None:
+def test_extension_bundles_compiled_catalog_with_five_profiles() -> None:
     import sqlite3
 
-    from aludiy_core.catalog import compile_catalog
-
-    root = Path(__file__).parents[2]
-    database = tmp_path / "profile_catalog.sqlite"
-    compile_catalog(root / "catalog" / "profiles", database)
+    database = EXTENSION / "resources" / "profile_catalog.sqlite"
     with sqlite3.connect(database) as connection:
         count = connection.execute("SELECT COUNT(*) FROM profiles").fetchone()[0]
 

@@ -173,11 +173,16 @@ def select_entity(
     view_layer: bpy.types.ViewLayer,
     entity_id: str,
 ) -> None:
+    active = None
     for obj in scene.objects:
         if obj.name not in view_layer.objects:
             continue
         object_entity = obj.get("aludiy_entity_id") or obj.get("aludiy_source_id")
         if object_entity == entity_id:
             obj.select_set(True)
+            if active is None:
+                active = obj
         elif obj.get("aludiy_managed"):
             obj.select_set(False)
+    if active is not None:
+        view_layer.objects.active = active

@@ -25,6 +25,9 @@ jobs:
       - name: Install test dependencies
         run: python -m pip install --upgrade pip pytest
 
+      - name: Prepare generated runtime resources
+        run: python tools/sync_core_into_extension.py
+
       - name: Run tests
         run: pytest -q
 

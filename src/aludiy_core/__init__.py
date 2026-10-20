@@ -42,20 +42,24 @@ __all__ = [
 ]
 
 from .geometry import (
+    GeometryChangeResult,
     MemberEnvelope,
     MemberMesh,
     derive_member_envelope,
     derive_member_mesh,
     member_length_mm,
+    move_node,
     resize_member,
+    translate_member,
     section_outline_uv,
 )
 from .units import PolarInput, parse_distance_mm, parse_length_mm, parse_polar
 
 __all__ += [
-    "MemberEnvelope", "MemberMesh", "PolarInput", "derive_member_envelope",
-    "derive_member_mesh", "member_length_mm", "parse_length_mm", "parse_polar",
-    "resize_member", "section_outline_uv"
+    "GeometryChangeResult", "MemberEnvelope", "MemberMesh", "PolarInput",
+    "derive_member_envelope", "derive_member_mesh", "member_length_mm", "move_node",
+    "parse_length_mm", "parse_polar", "resize_member", "section_outline_uv",
+    "translate_member"
 ]
 
 from .cutlist import CutListRow, cutlist_rows, write_cutlist_csv

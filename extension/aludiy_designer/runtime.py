@@ -13,7 +13,7 @@ from .vendor.aludiy_core import ProfileCatalog, Project
 
 CATALOG_REVISION = "alpha-2026.10"
 PROJECT_SCHEMA_VERSION = "0.1.0"
-EXTENSION_VERSION = "0.1.5-alpha"
+EXTENSION_VERSION = "0.1.6-alpha"
 WORKSPACE_NAME = "ALU DIY"
 AXIS_COLLECTION = "ALUDIY_AXES"
 SOLID_COLLECTION = "ALUDIY_SOLIDS"
@@ -209,3 +209,25 @@ def selected_member_ids(context: bpy.types.Context) -> tuple[str, ...]:
 def active_member_id(context: bpy.types.Context) -> str | None:
     member_ids = selected_member_ids(context)
     return member_ids[0] if member_ids else None
+
+
+def selected_node_ids(context: bpy.types.Context) -> tuple[str, ...]:
+    objects = list(getattr(context, "selected_objects", ()))
+    active_objects = getattr(getattr(context, "view_layer", None), "objects", None)
+    active_object = getattr(active_objects, "active", None)
+
+    result: list[str] = []
+    if active_object in objects:
+        active_id = entity_id_from_object(active_object)
+        if active_id and active_id.startswith("N-"):
+            result.append(active_id)
+    for obj in objects:
+        entity_id = entity_id_from_object(obj)
+        if entity_id and entity_id.startswith("N-") and entity_id not in result:
+            result.append(entity_id)
+    return tuple(result)
+
+
+def active_node_id(context: bpy.types.Context) -> str | None:
+    node_ids = selected_node_ids(context)
+    return node_ids[0] if node_ids else None

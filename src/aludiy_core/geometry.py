@@ -16,6 +16,12 @@ _EPSILON_MM = 1.0e-6
 
 
 @dataclass(frozen=True, slots=True)
+class GeometryChangeResult:
+    moved_node_ids: tuple[str, ...]
+    affected_member_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
 class MemberEnvelope:
     member_id: str
     start_mm: Vector3
@@ -259,14 +265,103 @@ def member_length_mm(project: Project, member_id: str) -> float:
     return _length(_sub(end, start))
 
 
+def _vector3(values, field_name: str) -> Vector3:
+    converted = tuple(float(value) for value in values)
+    if len(converted) != 3 or not all(math.isfinite(value) for value in converted):
+        raise ValidationError(f"{field_name} must contain three finite values")
+    return converted  # type: ignore[return-value]
+
+
+def _candidate_position(
+    project: Project,
+    node_id: str,
+    replacements: dict[str, Vector3],
+) -> Vector3:
+    return replacements.get(node_id, project.nodes[node_id].position_mm)
+
+
+def _affected_members(project: Project, node_ids: set[str]) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            member.id
+            for member in project.members.values()
+            if member.start_node_id in node_ids or member.end_node_id in node_ids
+        )
+    )
+
+
+def _validate_candidate_positions(
+    project: Project,
+    replacements: dict[str, Vector3],
+    affected_member_ids: tuple[str, ...],
+) -> None:
+    for affected_id in affected_member_ids:
+        affected = project.members[affected_id]
+        start = _candidate_position(project, affected.start_node_id, replacements)
+        end = _candidate_position(project, affected.end_node_id, replacements)
+        if math.dist(start, end) <= _EPSILON_MM:
+            raise ValidationError(f"member {affected.id} is zero-length")
+
+
+def _apply_node_positions(
+    project: Project,
+    replacements: dict[str, Vector3],
+) -> GeometryChangeResult:
+    moved = {
+        node_id: position
+        for node_id, position in replacements.items()
+        if math.dist(project.nodes[node_id].position_mm, position) > _EPSILON_MM
+    }
+    if not moved:
+        return GeometryChangeResult((), ())
+    affected = _affected_members(project, set(moved))
+    _validate_candidate_positions(project, moved, affected)
+    for node_id, position in moved.items():
+        project.nodes[node_id].position_mm = position
+    for affected_id in affected:
+        project.members[affected_id].revision += 1
+    project.validate()
+    return GeometryChangeResult(tuple(sorted(moved)), affected)
+
+
+def move_node(
+    project: Project,
+    node_id: str,
+    position_mm,
+) -> GeometryChangeResult:
+    """Move one authoritative node and update all incident member revisions."""
+
+    if node_id not in project.nodes:
+        raise MissingReferenceError(f"unknown node {node_id}")
+    return _apply_node_positions(
+        project,
+        {node_id: _vector3(position_mm, "node position")},
+    )
+
+
+def translate_member(
+    project: Project,
+    member_id: str,
+    delta_mm,
+) -> GeometryChangeResult:
+    """Translate both endpoint nodes of a member by an exact XYZ delta."""
+
+    member = _member(project, member_id)
+    delta = _vector3(delta_mm, "translation delta")
+    replacements = {}
+    for node_id in {member.start_node_id, member.end_node_id}:
+        replacements[node_id] = _add(project.nodes[node_id].position_mm, delta)
+    return _apply_node_positions(project, replacements)
+
+
 def resize_member(
     project: Project,
     member_id: str,
     length_mm: float,
     *,
     anchor: AnchorMode,
-) -> None:
-    """Resize a member along its current axis while explicitly anchoring it."""
+) -> GeometryChangeResult:
+    """Resize a member and propagate shared-node changes to connected members."""
 
     member = _member(project, member_id)
     requested = float(length_mm)
@@ -279,15 +374,21 @@ def resize_member(
     direction = _normalize(_sub(end_node.position_mm, start_node.position_mm))
 
     if anchor == "START":
-        end_node.position_mm = _add(start_node.position_mm, _scale(direction, requested))
+        replacements = {
+            member.end_node_id: _add(start_node.position_mm, _scale(direction, requested))
+        }
     elif anchor == "END":
-        start_node.position_mm = _sub(end_node.position_mm, _scale(direction, requested))
+        replacements = {
+            member.start_node_id: _sub(end_node.position_mm, _scale(direction, requested))
+        }
     else:
         center = _scale(_add(start_node.position_mm, end_node.position_mm), 0.5)
         half = _scale(direction, requested * 0.5)
-        start_node.position_mm = _sub(center, half)
-        end_node.position_mm = _add(center, half)
-    member.revision += 1
+        replacements = {
+            member.start_node_id: _sub(center, half),
+            member.end_node_id: _add(center, half),
+        }
+    return _apply_node_positions(project, replacements)
 
 
 def _section_frame(axis: Vector3, roll_deg: float) -> tuple[Vector3, Vector3]:

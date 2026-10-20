@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>AluDIY Designer v0.1.6-alpha 开发进度</title>
+<style>
+:root{--bg:#071018;--panel:#0e1a24;--line:#203544;--text:#eaf3f8;--muted:#91a8b6;--cyan:#53d7ff;--green:#45d483;--amber:#ffbf5a;--red:#ff6b6b}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 15% 0,#123044 0,transparent 32%),var(--bg);color:var(--text);font:15px/1.6 system-ui,-apple-system,"Noto Sans SC",sans-serif}.wrap{max-width:1240px;margin:auto;padding:42px 26px 72px}.eyebrow{color:var(--cyan);font-weight:700;letter-spacing:.12em}.hero{display:grid;grid-template-columns:1.35fr .65fr;gap:20px;margin:14px 0 26px}.card{background:linear-gradient(145deg,rgba(17,34,46,.95),rgba(9,19,28,.92));border:1px solid var(--line);border-radius:18px;padding:22px;box-shadow:0 18px 60px #0007}h1{font-size:42px;line-height:1.12;margin:4px 0 14px}h2{font-size:20px;margin:0 0 14px}p{color:var(--muted)}.version{font-size:30px;font-weight:800;color:var(--green)}.meter{height:10px;background:#172735;border-radius:99px;overflow:hidden}.meter i{display:block;width:54%;height:100%;background:linear-gradient(90deg,var(--green),var(--cyan))}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.pill{display:inline-block;border-radius:99px;padding:4px 10px;font-size:12px;font-weight:750}.done{background:#123c2a;color:#65e7a0}.doing{background:#4a3510;color:#ffd078}.todo{background:#24323d;color:#a9bdc9}.feature{min-height:172px}.feature strong{display:block;font-size:17px;margin:10px 0 4px}.timeline{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}.step{border-left:3px solid var(--line);padding-left:14px}.step.current{border-color:var(--cyan)}.step b{display:block}.dataflow{font-family:ui-monospace,Consolas,monospace;background:#07131c;border:1px dashed #315064;border-radius:12px;padding:16px;color:#bcecff}.footer{margin-top:24px;color:#708895}@media(max-width:850px){.hero,.grid,.timeline{grid-template-columns:1fr}h1{font-size:34px}}
+</style>
+</head>
+<body><main class="wrap">
+<div class="eyebrow">ALUDIY DESIGNER · DEVELOPMENT MAP</div>
+<section class="hero">
+<div class="card"><h1>精确修改与尺寸<br>从“能画”进入“能改”</h1><p>选中工程线、实体或节点，通过毫米级输入驱动同一份工程数据；左侧线图与右侧实体同步重建。</p><div class="dataflow">坐标／长度输入 → Node 更新 → 共享关系传播 → Member revision → 线图／实体／参考尺寸同步</div></div>
+<div class="card"><div class="version">v0.1.6-alpha</div><p>Phase A · 基础工程建模器</p><div class="meter"><i></i></div><p>基础阶段整体完成度约 54%</p><span class="pill done">当前版本已完成</span></div>
+</section>
+<section class="grid">
+<div class="card feature"><span class="pill done">已完成</span><strong>精确节点坐标</strong><p>选择节点后输入 X / Y / Z；共享节点驱动全部相邻型材更新。</p></div>
+<div class="card feature"><span class="pill done">已完成</span><strong>型材长度与固定端</strong><p>支持固定起端、固定末端、固定中心，修改后关系传播。</p></div>
+<div class="card feature"><span class="pill done">已完成</span><strong>端点与精确平移</strong><p>分别修改起点、终点，或输入 ΔX / ΔY / ΔZ 平移整根型材。</p></div>
+<div class="card feature"><span class="pill done">已完成</span><strong>临时参考尺寸</strong><p>线图中显示选中型材长度；节点显示精确坐标，不写入持久约束。</p></div>
+<div class="card feature"><span class="pill done">已完成</span><strong>远程更新基础</strong><p>GitHub Release、GitHub Pages 和 Blender 远程更新仓库自动发布。</p></div>
+<div class="card feature"><span class="pill doing">开发中</span><strong>真实 Blender GUI 验收</strong><p>需要在 Blender 5.2 中验证弹窗、Undo、叠加层和原位更新体验。</p></div>
+</section>
+<section class="card" style="margin-top:18px"><h2>全局路线</h2><div class="timeline">
+<div class="step current"><span class="pill done">v0.1.6</span><b>精确修改与尺寸</b><p>节点、端点、长度、平移、参考尺寸、远程更新。</p></div>
+<div class="step"><span class="pill todo">v0.1.7</span><b>完整工程吸附</b><p>中点、垂足、轴线、交点、槽轨和候选切换。</p></div>
+<div class="step"><span class="pill todo">v0.2.0</span><b>节点与自动退让</b><p>L/T/三向节点、主次杆、斜接和切割平面。</p></div>
+<div class="step"><span class="pill todo">v0.3.0</span><b>板材与家居构件</b><p>封闭面、层板、桌面、背板、门板和附件。</p></div>
+</div><div class="timeline" style="margin-top:20px">
+<div class="step"><span class="pill todo">v0.4.0</span><b>BOM、加工与安装</b><p>真实切割长度、加工、标签、爆炸图和安装步骤。</p></div>
+<div class="step"><span class="pill todo">v0.5.x</span><b>产品化工具</b><p>模板、目录后台、版本冻结和供应链规则。</p></div>
+<div class="step"><span class="pill todo">v0.6+</span><b>在线设计与下单</b><p>网页配置、报价、订单、安装与售后。</p></div>
+<div class="step"><span class="pill todo">Later</span><b>AI 设计</b><p>Agent 调用受控工程命令，不直接操作网格。</p></div>
+</div></section>
+<div class="footer">已完成 / 开发中 / 待开发状态随每次插件发布同步更新。</div>
+</main></body></html>
