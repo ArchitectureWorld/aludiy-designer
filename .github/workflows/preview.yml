@@ -9,7 +9,7 @@ on:
       source_sha:
         description: "Full commit SHA to publish for Blender experience testing"
         required: false
-        default: "a2bb405b7ac08998ed1072f62d0cc72f44a33b66"
+        default: "972742cf3ae603baa33ac4c312e3c40b53a8b9ca"
 
 # Preview is a test channel. Publishing it does not merge the feature PR.
 permissions:
@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: false
 env:
   BLENDER_VERSION: "5.2.2"
-  PREVIEW_SOURCE_SHA: "a2bb405b7ac08998ed1072f62d0cc72f44a33b66"
+  PREVIEW_SOURCE_SHA: "972742cf3ae603baa33ac4c312e3c40b53a8b9ca"
 
 jobs:
   build:
