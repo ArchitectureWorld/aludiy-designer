@@ -45,13 +45,17 @@ class SectionLayout:
     create_rect: Rect
     unlink_rect: Rect
     unlink_slot_rect: Rect
+    mode_rect: Rect
+    remove_rect: Rect
+    clear_selection_rect: Rect
 
     def hit(self, point):
         if not self.rect.contains(point):
             return None
         for name, rect in (('PIN',self.pin_rect),('CLEAR',self.clear_rect),
                            ('CREATE',self.create_rect),('UNLINK_SELECTED',self.unlink_rect),
-                           ('UNLINK_SLOT',self.unlink_slot_rect)):
+                           ('UNLINK_SLOT',self.unlink_slot_rect),('MODE',self.mode_rect),
+                           ('REMOVE_SLOT',self.remove_rect),('CLEAR_SELECTION',self.clear_selection_rect)):
             if rect.contains(point):
                 return name, ''
         nearby = [(math.dist(s.center,point),s.interface_id) for s in self.slots
@@ -70,7 +74,7 @@ def section_layout(section, roll_deg, *, region_width, region_height,
     scale_ui = max(.75, min(2.5, float(ui_scale)))
     right = min(region_width, visible_right if visible_right is not None else region_width)
     available = right-toolbar_width-24*scale_ui
-    h = 330*scale_ui
+    h = 382*scale_ui
     if available < 190*scale_ui or region_height < h+40*scale_ui:
         return None
     w = min(245*scale_ui, available)
@@ -80,7 +84,7 @@ def section_layout(section, roll_deg, *, region_width, region_height,
     outline=tuple(rotate(uv) for uv in section_outline_uv(section,detailed=True))
     span=max((max(abs(a),abs(b)) for a,b in outline),default=1)
     diagram_scale=min((w-88*scale_ui)/2,35*scale_ui)/max(span,1)
-    cx,cy=x+w/2,y+196*scale_ui
+    cx,cy=x+w/2,y+248*scale_ui
     def screen(uv):
         u,v=rotate(uv)
         return cx+diagram_scale*u,cy+diagram_scale*v
@@ -100,11 +104,14 @@ def section_layout(section, roll_deg, *, region_width, region_height,
         slots.append(SlotHit(slot.id,pt,radius,label,Rect(tx,ty,lw,lh)))
     button_w=(w-30*scale_ui)/2
     return SectionLayout(Rect(x,y,w,h),(cx,cy),ring,tuple(slots),
+        Rect(x+10*scale_ui,y+81*scale_ui,button_w,24*scale_ui),
+        Rect(x+20*scale_ui+button_w,y+81*scale_ui,button_w,24*scale_ui),scale_ui,
         Rect(x+10*scale_ui,y+55*scale_ui,button_w,24*scale_ui),
-        Rect(x+20*scale_ui+button_w,y+55*scale_ui,button_w,24*scale_ui),scale_ui,
-        Rect(x+10*scale_ui,y+29*scale_ui,button_w,24*scale_ui),
-        Rect(x+20*scale_ui+button_w,y+29*scale_ui,button_w,24*scale_ui),
-        Rect(x+10*scale_ui,y+3*scale_ui,w-20*scale_ui,24*scale_ui))
+        Rect(x+20*scale_ui+button_w,y+55*scale_ui,button_w,24*scale_ui),
+        Rect(x+10*scale_ui,y+29*scale_ui,w-20*scale_ui,24*scale_ui),
+        Rect(x+10*scale_ui,y+107*scale_ui,w-20*scale_ui,22*scale_ui),
+        Rect(x+10*scale_ui,y+3*scale_ui,button_w,24*scale_ui),
+        Rect(x+20*scale_ui+button_w,y+3*scale_ui,button_w,24*scale_ui))
 
 
 def selection_readout(project, member_ids, node_ids, *, active_member=None, endpoint=None):

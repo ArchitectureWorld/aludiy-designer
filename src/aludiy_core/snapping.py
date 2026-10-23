@@ -223,23 +223,40 @@ def member_candidates(project: Project, *, origin_mm, cursor_px, project_point,
     return tuple(sorted(result,key=lambda c:(c.distance_px,0 if c.kind=='MIDPOINT' else 1,c.member_id)))
 
 
+def _candidate_order(candidate):
+    """Same semantic priority across ordinary axes and rails; stable Tab order."""
+    kind = candidate.point_kind if candidate.kind == 'SLOT' else candidate.kind
+    priority = {'NODE': 0, 'START': 0, 'END': 0, 'MIDPOINT': 1,
+                'PERPENDICULAR': 2, 'AXIS': 3, 'GROUND': 4}
+    return priority[kind], candidate.distance_px, candidate.key
+
+
 def engineering_candidates(project: Project, *, origin_mm, cursor_px,
                            project_point: Projection, ray_origin_mm, ray_direction,
                            excluded_node_ids=(), excluded_member_ids=(), radius_px=14.0,
                            axis=None, plane_lock=False, exact_position_mm=None,
                            perpendicular=True, ground_mm=None, raw_position_mm=None,
-                           nodes_only=False, catalog=None, slot_target=None) -> tuple[SnapCandidate, ...]:
+                           nodes_only=False, catalog=None, slot_target=None,
+                           slot_targets=(), slot_only=False) -> tuple[SnapCandidate, ...]:
     """One geometry-only candidate pipeline for drawing and moving.
 
     Semantic points have priority within the pixel aperture: endpoint, midpoint,
     perpendicular foot, nearest axis station. Tab can still reach every target.
     Co-located *different* nodes/members are never merged or silently hidden.
     """
-    if slot_target is not None and not nodes_only:
-        return slot_candidates(project,catalog,slot_target,origin_mm=origin_mm,cursor_px=cursor_px,
-            project_point=project_point,ray_origin_mm=ray_origin_mm,ray_direction=ray_direction,
-            excluded_member_ids=excluded_member_ids,radius_px=radius_px,axis=axis,
-            plane_lock=plane_lock,exact_position_mm=exact_position_mm,perpendicular=perpendicular)
+    from .slot_selection import normalize_pairs
+    targets = normalize_pairs(tuple(slot_targets) + ((slot_target,) if slot_target else ()))
+    rails = []
+    if not nodes_only:
+        for target in targets:
+            rails.extend(slot_candidates(project, catalog, target, origin_mm=origin_mm,
+                cursor_px=cursor_px, project_point=project_point,
+                ray_origin_mm=ray_origin_mm, ray_direction=ray_direction,
+                excluded_member_ids=excluded_member_ids, radius_px=radius_px,
+                axis=axis, plane_lock=plane_lock, exact_position_mm=exact_position_mm,
+                perpendicular=perpendicular))
+    if slot_only and targets and not nodes_only:
+        return tuple(sorted(rails, key=_candidate_order))
     options = list(node_candidates(
         project, origin_mm=origin_mm, cursor_px=cursor_px, project_point=project_point,
         excluded_node_ids=excluded_node_ids, radius_px=radius_px, axis=axis,
@@ -275,12 +292,13 @@ def engineering_candidates(project: Project, *, origin_mm, cursor_px,
                     distance = math.dist(cursor_px, screen)
                     if distance <= radius_px:
                         options.append(SnapCandidate('PERPENDICULAR', point, distance, None, mid, t))
-    priority = {'NODE': 0, 'MIDPOINT': 1, 'PERPENDICULAR': 2, 'AXIS': 3, 'GROUND': 4}
-    ordered = sorted(options, key=lambda c: (priority[c.kind], c.distance_px, c.key))
+    options.extend(rails)
+    ordered = sorted(options, key=_candidate_order)
     result = []
     for candidate in ordered:
         if candidate.member_id and any(
             other.member_id == candidate.member_id and
+            other.interface_id == candidate.interface_id and
             math.dist(other.position_mm, candidate.position_mm) <= JOIN_TOLERANCE_MM
             for other in result
         ):
@@ -346,8 +364,8 @@ def slot_candidates(project, catalog, slot_target, *, origin_mm, cursor_px,
                     exact_position_mm=None, perpendicular=True):
     """Candidates on one explicitly chosen semantic rail, not the host axis.
 
-    Stable IDs distinguish parallel lanes. The chosen target intentionally limits
-    the candidate family; releasing the target restores ordinary axis snapping.
+    Stable IDs distinguish parallel lanes. The caller merges these with ordinary
+    candidates by default; only the explicit restricted mode excludes them.
     All authoritative coordinates are Python doubles.
     """
     from .associations import slot_reference

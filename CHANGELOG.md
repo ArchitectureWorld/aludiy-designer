@@ -1,3 +1,10 @@
+## 0.1.19-alpha — mixed snapping and multi-rail operations
+- Merge ordinary snap families with explicitly activated rails by default; rail-only is an explicit opt-in.
+- Shift-toggle a revision-bound rail collection across members; selected and activated sets remain distinct.
+- Atomically match or unlink exact selected host/interface scopes, with confirmation and Undo.
+- Preserve valid targets when one host is deleted; clear stale UI state at explicit new/import boundaries.
+- No schema or copying/action-wheel behavior change.
+
 ## 0.1.18-alpha — engineering copy and command wheel
 - Clear deleted-host ephemeral slot targets on engineering deletion and safe snap entry; preserve valid relationships and strict catalog errors.
 - Shift+D copies the selected engineering graph with independent IDs and internal-only dependencies; cancellable G placement is one Undo.

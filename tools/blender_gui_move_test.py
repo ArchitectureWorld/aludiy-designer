@@ -145,6 +145,9 @@ def run():
     check(len(g_move.display_project(window.scene).nodes)==5,'DETACH split remains candidate-only')
     key('ESC'); yield
     check(raw()==original and len(runtime.get_project(window.scene).nodes)==4,'Esc restores DETACH without orphan nodes')
+    # This legacy movement test targets model pixels, not the section console.
+    # Keep them unobstructed; dedicated section suites verify click blocking.
+    runtime.settings(window.scene).show_section_inspector=False
     reset(); yield
     mouse(*point('N-001',right)); yield
     key('LEFTMOUSE'); yield

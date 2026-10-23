@@ -497,7 +497,8 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
             axis=self._axis, plane_lock=self._plane_lock, exact_position_mm=exact,
             ground_mm=self._ground, raw_position_mm=tuple(origin[i]+delta[i] for i in range(3)),
             nodes_only=self.connect_only, catalog=runtime.get_catalog(),
-            slot_target=slot_tools.snapping_target(self._scene,self._original))
+            slot_targets=slot_tools.snapping_targets(self._scene,self._original),
+            slot_only=runtime.settings(self._scene).slot_only)
         keys = tuple(c.key for c in options)
         if keys != self._choice_keys:
             self._snap_choice = 0
@@ -516,7 +517,11 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
         if self._snap is not None:
             suffix = f' · Tab 切换 {self._snap_choice % len(self._snap_options)+1}/{len(self._snap_options)}' if len(self._snap_options)>1 else ''
             return describe_candidate(self._snap, self._original) + suffix
-        return describe_candidate(None, self._original) + ' · Ctrl 自由移动'
+        s=runtime.settings(self._scene)
+        if s.slot_only and s.slot_target_member_id:
+            return '仅所选槽轨 · 未命中 · Ctrl 自由移动'
+        extra = ' + 已启用槽轨' if s.slot_target_member_id else ''
+        return describe_candidate(None, self._original) + extra + ' · Ctrl 自由移动'
 
     def _update(self, context):
         if self._waiting: return
@@ -808,12 +813,14 @@ class ALUDIY_OT_create_associations(bpy.types.Operator):
         try:
             spec=target_spec(context)
             from . import slot_tools
-            from .vendor.aludiy_core.associations import create_slot_associations
+            from .vendor.aludiy_core.associations import create_slot_associations_many
             original=runtime.get_project(context.scene)
-            target=slot_tools.snapping_target(context.scene,original)
-            if target:
-                result=create_slot_associations(original,runtime.get_catalog(),
-                    host_member_id=target[0],interface_id=target[1],**spec)
+            slot_tools.sanitize_missing_target(context.scene,original)
+            records=slot_tools.selected_records(context.scene)
+            targets=slot_tools.choice_model.validated_pairs(original,runtime.get_catalog(),records)
+            if targets:
+                result=create_slot_associations_many(original,runtime.get_catalog(),
+                    slot_targets=targets,**spec)
             else:
                 if spec.get('endpoint'): raise ValidationError('请 Shift 多选相接杆件/节点；或先指定目标槽轨')
                 result=create_associations(original,catalog=runtime.get_catalog(),**spec)

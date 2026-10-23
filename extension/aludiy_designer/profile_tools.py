@@ -2,7 +2,7 @@
 import math
 from types import SimpleNamespace
 import bpy
-from bpy.props import EnumProperty, StringProperty
+from bpy.props import EnumProperty, StringProperty, BoolProperty
 from . import runtime, g_move, scene_adapter, selection_state
 from .vendor.aludiy_core.profile_editing import edit_profiles, parse_angle_deg, interface_rails
 from .vendor.aludiy_core.geometry import derive_member_mesh, section_outline_uv
@@ -100,8 +100,9 @@ class ALUDIY_OT_edit_selected_profiles(bpy.types.Operator):
 class ALUDIY_OT_inspect_profile_slot(bpy.types.Operator):
     bl_idname = 'aludiy.inspect_profile_slot'
     bl_label = '检查槽位'
-    bl_description = '只高亮活动杆件的语义槽轨；不吸附、不建立关联'
+    bl_description = '单击单选，Shift+单击追加/取消槽轨；用于吸附后生效，不自动建立关联'
     interface_id: StringProperty(default='', options={'SKIP_SAVE'})
+    extend: BoolProperty(default=False, options={'SKIP_SAVE'})
 
     @classmethod
     def poll(cls, context):
@@ -118,11 +119,16 @@ class ALUDIY_OT_inspect_profile_slot(bpy.types.Operator):
         if self.interface_id not in profile.section.interfaces:
             self.report({'WARNING'}, '当前型材不存在该槽位；请重新选择')
             return {'CANCELLED'}
+        from . import slot_tools
+        try:
+            slot_tools.select_inset_slot(context.scene,p,mid,self.interface_id,extend=self.extend)
+        except ValidationError as exc:
+            self.report({'WARNING'},str(exc));return {'CANCELLED'}
         s = runtime.settings(context.scene)
         s.inspected_member_id, s.inspected_profile_id = mid, profile.profile_type_id
         s.inspected_interface_id = self.interface_id
         s.show_section_inspector = True
-        runtime.set_status(context.scene, f'{mid} · {self.interface_id} · 仅检查，不建立关联')
+        runtime.set_status(context.scene, f'{mid} · {self.interface_id} · 已选 {len(slot_tools.selected_records(context.scene))} 条槽轨；用于吸附后生效，不建立关联')
         g_move._redraw()
         return {'FINISHED'}
 
@@ -238,11 +244,13 @@ def handle_inspector_click(context, event):
     if not _busy():
         with context.temp_override(window=context.window,area=area,region=region):
             if action == 'SLOT':
-                bpy.ops.aludiy.inspect_profile_slot(interface_id=sid)
+                bpy.ops.aludiy.inspect_profile_slot(interface_id=sid,extend=bool(getattr(event,'shift',False)))
             elif action == 'PIN' and bpy.ops.aludiy.set_slot_target.poll():
                 bpy.ops.aludiy.set_slot_target()
             elif action == 'CLEAR' and runtime.settings(context.scene).slot_target_member_id:
                 bpy.ops.aludiy.clear_slot_target()
+            elif action in {'MODE','REMOVE_SLOT','CLEAR_SELECTION'}:
+                bpy.ops.aludiy.manage_slot_selection(action={'MODE':'MODE','REMOVE_SLOT':'REMOVE','CLEAR_SELECTION':'CLEAR'}[action])
             elif action in {'CREATE','UNLINK_SELECTED','UNLINK_SLOT'}:
                 try:
                     queue_data_action(bpy.context, action, view)
@@ -264,8 +272,9 @@ def queue_data_action(context, action, view):
     if window_id in _PENDING_ACTIONS:return
     raw=runtime.settings(context.scene).project_json
     spec=json.dumps(g_move.target_spec(context),sort_keys=True)
-    target=(runtime.settings(context.scene).slot_target_member_id,
-            runtime.settings(context.scene).slot_target_interface_id)
+    from . import slot_tools
+    target=slot_tools.target_state(context.scene)
+    scope=slot_tools.choice_pairs(context.scene)
     sid=selected_slot(context.scene,view.member_id,view.project);mid=view.member_id
     scene_id=context.scene.as_pointer()
     def dispatch():
@@ -280,15 +289,16 @@ def queue_data_action(context, action, view):
             with bpy.context.temp_override(window=window,area=area,region=region):
                 c=bpy.context;s=runtime.settings(c.scene)
                 if (_busy() or s.project_json!=raw or json.dumps(g_move.target_spec(c),sort_keys=True)!=spec
-                        or (s.slot_target_member_id,s.slot_target_interface_id)!=target):
+                        or slot_tools.target_state(c.scene)!=target):
                     runtime.set_status(c.scene,'操作对象已变化，关联操作未执行，请重新点击')
                     return None
                 if action=='CREATE' and bpy.ops.aludiy.create_associations.poll():
                     bpy.ops.aludiy.create_associations('EXEC_DEFAULT',True)
                 elif action=='UNLINK_SELECTED' and bpy.ops.aludiy.remove_associations.poll():
                     bpy.ops.aludiy.remove_associations('EXEC_DEFAULT',True)
-                elif action=='UNLINK_SLOT' and sid:
-                    bpy.ops.aludiy.unlink_slot('INVOKE_DEFAULT',True,host_member_id=mid,interface_id=sid)
+                elif action=='UNLINK_SLOT' and (scope or sid):
+                    bpy.ops.aludiy.unlink_slots('INVOKE_DEFAULT',True,
+                        targets_json=json.dumps(scope or ((mid,sid),)))
         except (ReferenceError,RuntimeError,ValidationError) as exc:
             print(f'AluDIY section action cancelled: {exc}')
         finally:g_move._redraw()
@@ -331,7 +341,7 @@ def _draw_inspector():
         x,y,w,h=lay.rect.x,lay.rect.y,lay.rect.width,lay.rect.height;u=lay.ui_scale
         gpu.state.blend_set('ALPHA')
         ov._filled_rect(x,y,w,h,(.035,.045,.055,.96))
-        ov._text(x+10*u,y+h-22*u,f'{mid} · 点击截面选槽',size=12*u)
+        ov._text(x+10*u,y+h-22*u,f'{mid} · 单选 / Shift 多选槽',size=12*u)
         ov._text(x+10*u,y+h-42*u,f'U {section.width_mm:g} × V {section.height_mm:g} mm · {member.roll_deg%360:g}°',size=12*u)
         ov._text(x+10*u,y+h-60*u,'终端看向起端 · 相对 0° 基准',size=10*u)
         points=[]
@@ -339,45 +349,53 @@ def _draw_inspector():
             points.extend([lay.outline[i],lay.outline[(i+1)%len(lay.outline)]])
         ov._polyline(points,color=(.85,.93,1,1),width=1.4*u)
         sid=selected_slot(c.scene,mid,p);hover=hovered_slot(c,view)
+        from . import slot_tools
+        choice_error = ''
+        try:
+            chosen=set(slot_tools.choice_pairs(c.scene))
+            active_targets=set(slot_tools.target_specs(c.scene,p))
+        except ValidationError as exc:
+            chosen=active_targets=set();choice_error=str(exc)
         for slot in lay.slots:
-            active=slot.interface_id==sid;hot=slot.interface_id==hover
-            color=(1,.72,.1,1) if active else ((.65,.94,1,1) if hot else (.2,.78,1,1))
-            if hot:
-                g_move._disc(slot.center,8*u,(.15,.5,.65,.5))
-            g_move._disc(slot.center,(4.5 if active or hot else 3)*u,color)
+            selected=(mid,slot.interface_id) in chosen
+            active=(mid,slot.interface_id) in active_targets
+            hot=slot.interface_id==hover
+            color=(1,.72,.1,1) if selected else ((.65,.94,1,1) if hot else (.2,.78,1,1))
+            if active:g_move._disc(slot.center,7*u,(.9,.9,.8,1))
+            if hot:g_move._disc(slot.center,8*u,(.15,.5,.65,.5))
+            g_move._disc(slot.center,(4.5 if selected or hot or active else 3)*u,color)
             ov._text(slot.label_rect.x,slot.label_rect.y+3*u,slot.label,size=9*u,color=color)
         disabled=_busy()
-        from . import slot_tools
-        links=slot_tools.slot_links(p,mid,sid) if sid else ()
+        links=slot_tools.links_for_targets(p,chosen)
         related=slot_tools.selected_links(c,p)
         def short_slot(value):
             return value.replace('FACE_P','+').replace('FACE_N','−').replace('.S','.槽')
-        ov._text(x+10*u,y+115*u,('操作中 · ' if disabled else '查看 ') + short_slot(hover or sid or '尚未选槽'),size=11*u,color=(1,.75,.25,1))
+        ov._text(x+10*u,y+169*u,('操作中 · ' if disabled else '查看 ') + short_slot(hover or sid or '尚未选槽'),size=11*u,color=(1,.75,.25,1))
         pinned=bool(s.slot_target_member_id)
-        target_label=f'定位 {s.slot_target_member_id} / {short_slot(s.slot_target_interface_id)}' if pinned else ('普通吸附 · 已有关联仍保留' if related else '定位：普通吸附')
-        try:
-            if pinned:slot_tools.target_spec(c.scene,p)
-        except Exception:target_label='定位目标失效：请停止后重设'
-        ov._text(x+10*u,y+99*u,target_label,size=10*u)
-        ov._text(x+10*u,y+83*u,f'此槽关联 {len(links)} 处 / 所选关联 {len(related)} 处',size=10*u)
-        controls=((lay.pin_rect,'用于吸附',bool(sid)),
+        label=f'已选 {len(chosen)} 条 / 定位 {len(active_targets)} 条'
+        if choice_error:label='槽轨引用失效：移除或清空后重选'
+        ov._text(x+10*u,y+153*u,label,size=10*u)
+        ov._text(x+10*u,y+137*u,f'槽轨关联 {len(links)} 处 / 端点选择 {len(related)} 处',size=10*u)
+        mode='仅所选槽轨' if s.slot_only and pinned else '普通 + 槽轨'
+        if not pinned:mode='普通吸附（无定位槽）'
+        controls=((lay.mode_rect,f'吸附：{mode} · 切换',True),
+                  (lay.pin_rect,'用于吸附',bool(chosen) and not choice_error),
                   (lay.clear_rect,'停止定位',pinned),
                   (lay.create_rect,'创建关联',bool(g_move.engineering_objects(c))),
-                  (lay.unlink_rect,'解除所选',bool(related) or bool(g_move.engineering_objects(c))),
-                  (lay.unlink_slot_rect,f'解除此槽关联 · {len(links)} 处…',bool(links)))
+                  (lay.unlink_rect,'解除所选端点',bool(related) or bool(g_move.engineering_objects(c))),
+                  (lay.unlink_slot_rect,f'解除所选槽关联 · {len(links)} 处…',bool(links)),
+                  (lay.remove_rect,'移除当前槽',bool(sid)),
+                  (lay.clear_selection_rect,'清空槽轨选择',bool(chosen or pinned or choice_error)))
         for rect,label,enabled in controls:
             enabled=enabled and not disabled
             ov._filled_rect(rect.x,rect.y,rect.width,rect.height,(.17,.27,.34,1) if enabled else (.09,.12,.15,1))
-            ov._text(rect.x+8*u,rect.y+9*u,label,size=11*u,
+            # Keep controls within their visible hit rectangles even in narrow views.
+            import blf
+            blf.size(0,11*u)
+            while len(label)>2 and blf.dimensions(0,label)[0] > rect.width-12*u:
+                label=label[:-2]+'…'
+            ov._text(rect.x+6*u,rect.y+8*u,label,size=11*u,
                      color=ov.TEXT_COLOR if enabled else (.42,.48,.51,1))
-        # A pinned rail has its own overlay; don't paint it twice.
-        same_target=(s.slot_target_member_id==mid and s.slot_target_interface_id==sid)
-        if sid and not same_target:
-            rail=next(r for r in interface_rails(p,mid,runtime.get_catalog()) if r.interface_id==sid)
-            a,b=ov._project(rail.start_mm),ov._project(rail.end_mm)
-            if a is not None and b is not None:
-                ov._polyline([tuple(a),tuple(b)],color=(1,.67,.1,1),width=3)
-                ov.draw_snap_marker(tuple((a+b)*.5),color=(1,.72,.1,1))
     except Exception as exc:
         print(f'AluDIY section inspector: {exc}')
     finally:

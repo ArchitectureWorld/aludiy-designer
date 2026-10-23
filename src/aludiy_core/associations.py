@@ -320,10 +320,11 @@ def validate_slot_catalog(project, catalog):
                 raise ValidationError(f'{r.id} 槽轨引用与目录版本或几何不一致，禁止静默适配')
 
 
-def _slot_proposals(project, catalog, host_ids, node_ids, *, interface_id=None):
+def _slot_proposals(project, catalog, host_ids, node_ids, *, interface_id=None, slot_targets=None):
     from .profile_editing import interface_rails
     rails = [(mid, rail) for mid in sorted(host_ids) for rail in interface_rails(project,mid,catalog)
-             if interface_id is None or rail.interface_id==interface_id]
+             if (interface_id is None or rail.interface_id==interface_id)
+             and (slot_targets is None or (mid,rail.interface_id) in slot_targets)]
     proposals=[]
     for nid in sorted(node_ids):
         point=project.nodes[nid].position_mm; matches=[]
@@ -383,6 +384,60 @@ def remove_slot_associations(project, *, host_member_id, interface_id):
     ids = [rid for rid, r in q.associations.items()
            if r.kind == 'ON_SLOT' and r.host_member_id == host_member_id
            and r.slot_reference.interface_id == interface_id]
+    for rid in ids:
+        del q.associations[rid]
+    q.validate()
+    return AssociationChange(q, len(ids))
+
+
+def create_slot_associations_many(project, catalog, *, slot_targets,
+                                  member_ids=(), node_ids=(), endpoint=None):
+    """Atomically match already-placed endpoints against exact selected rail pairs.
+
+    Ambiguity anywhere rejects the entire operation. Never use a Cartesian
+    product of hosts and interface names, and never move nodes to manufacture a
+    match. Graph validation continues to reject cycles and multiple hosts.
+    """
+    from .slot_selection import normalize_pairs
+    targets = normalize_pairs(slot_targets)
+    if not targets:
+        raise ValidationError('请先选择至少一条槽轨')
+    for mid, sid in targets:
+        slot_reference(project, mid, sid, catalog)
+    validate_slot_catalog(project, catalog)
+    _, nids = _selection(project, member_ids, node_ids, endpoint)
+    q = Project.from_dict(project.to_dict())
+    proposals = _slot_proposals(q, catalog, {mid for mid, _ in targets}, nids,
+                               slot_targets=set(targets))
+    if not proposals:
+        raise ValidationError('选中端点尚未位于所选槽轨；先吸附定位，再创建关联')
+    signatures = {_signature(r) for r in q.associations.values()}
+    count = 0
+    for relation in proposals:
+        if _signature(relation) in signatures:
+            continue
+        i = 1
+        while f'R-{i:03d}' in q.associations:
+            i += 1
+        q.associations[f'R-{i:03d}'] = replace(relation, id=f'R-{i:03d}')
+        signatures.add(_signature(relation)); count += 1
+    if q.schema_version != '0.4.0':
+        q.schema_version = '0.3.0'
+    q.validate()
+    return AssociationChange(q, count)
+
+
+def remove_slot_associations_many(project, *, slot_targets):
+    """Remove exactly these host/interface edges, once; preserve other constraints."""
+    from .slot_selection import normalize_pairs
+    targets = set(normalize_pairs(slot_targets))
+    if not targets:
+        raise ValidationError('请先选择需要解除关联的槽轨')
+    if any(mid not in project.members for mid, _ in targets):
+        raise ValidationError('待解除槽轨的主杆不存在')
+    q = Project.from_dict(project.to_dict())
+    ids = [rid for rid, r in q.associations.items() if r.kind == 'ON_SLOT'
+           and (r.host_member_id, r.slot_reference.interface_id) in targets]
     for rid in ids:
         del q.associations[rid]
     q.validate()

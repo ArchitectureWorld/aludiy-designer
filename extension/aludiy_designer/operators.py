@@ -216,7 +216,8 @@ def _point_from_event(context: bpy.types.Context, event, operator):
         project_point=project_point, ray_origin_mm=ro, ray_direction=rd,
         excluded_node_ids=excluded, radius_px=settings(context.scene).snap_pixel_radius,
         axis=axis, plane_lock=plane_lock, perpendicular=start is not None,
-        catalog=get_catalog(), slot_target=slot_tools.snapping_target(context.scene,project))
+        catalog=get_catalog(), slot_targets=slot_tools.snapping_targets(context.scene,project),
+        slot_only=settings(context.scene).slot_only)
     if start is not None:
         opts = tuple(c for c in opts if math.dist(c.position_mm, start) > JOIN_TOLERANCE_MM)
     keys = tuple(c.key for c in opts)
@@ -323,6 +324,7 @@ class ALUDIY_OT_new_project(bpy.types.Operator):
             self.report({"ERROR"}, str(exc))
             set_status(context.scene, f"新建失败，已保留原工程：{exc}")
             return {"CANCELLED"}
+        runtime.clear_slot_ui(context.scene)
         set_status(context.scene, "已创建空白工程项目")
         return {"FINISHED"}
 
@@ -1001,6 +1003,7 @@ class ALUDIY_OT_import_project(bpy.types.Operator, ImportHelper):
         except Exception as exc:
             self.report({"ERROR"}, str(exc))
             return {"CANCELLED"}
+        runtime.clear_slot_ui(context.scene)
         if revision_warning:
             self.report({"WARNING"}, revision_warning)
             set_status(context.scene, revision_warning)

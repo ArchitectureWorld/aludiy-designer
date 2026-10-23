@@ -134,3 +134,21 @@ def test_new_project_rebuild_failure_rolls_back(setup):
     state.fail_next_rebuild = True
     assert ns['ALUDIY_OT_new_project']().execute(context) == {'CANCELLED'}
     assert context.scene.payload == before and state.cache == before
+
+
+def test_confirmed_new_project_clears_transient_slot_ui_only_after_success(setup):
+    context,state,ns=setup
+    state.clear_calls=0
+    def clear(scene):
+        state.clear_calls+=1
+    ns['runtime']=SimpleNamespace(clear_slot_ui=clear)
+    assert ns['ALUDIY_OT_new_project']().execute(context)=={'FINISHED'}
+    assert state.clear_calls==1
+
+
+def test_failed_new_project_preserves_transient_slot_ui(setup):
+    context,state,ns=setup
+    state.clear_calls=0;state.fail_next_rebuild=True
+    ns['runtime']=SimpleNamespace(clear_slot_ui=lambda scene:setattr(state,'clear_calls',state.clear_calls+1))
+    assert ns['ALUDIY_OT_new_project']().execute(context)=={'CANCELLED'}
+    assert state.clear_calls==0

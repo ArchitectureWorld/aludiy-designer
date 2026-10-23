@@ -1,3 +1,5 @@
+> Preview 0.1.19-alpha: [混合吸附、多选槽轨与批量关联](docs/acceptance/v0.1.19-alpha.md)。原更新源不变；Windows体验待确认。
+
 > Preview 0.1.18-alpha: [工程复制、中键操作盘与删除目标清理](docs/acceptance/v0.1.18-alpha.md)。更新源不变，Windows体验待确认。
 
 # AluDIY Designer · 0.1.16-alpha Preview

@@ -13,7 +13,7 @@ from .vendor.aludiy_core import ProfileCatalog, Project
 
 CATALOG_REVISION = "alpha-2026.10"
 PROJECT_SCHEMA_VERSION = "0.1.0"
-EXTENSION_VERSION = "0.1.18-alpha"
+EXTENSION_VERSION = "0.1.19-alpha"
 WORKSPACE_NAME = "ALU DIY"
 AXIS_COLLECTION = "ALUDIY_AXES"
 SOLID_COLLECTION = "ALUDIY_SOLIDS"
@@ -69,6 +69,10 @@ class AluDIYSceneSettings(bpy.types.PropertyGroup):
     joint_gap_input: bpy.props.StringProperty(name="端面间隙 mm", default="0", description="直角端面对接的非负端面间隙，按毫米解析")
     show_selection_lengths: bpy.props.BoolProperty(name="展开各杆件长度", default=False,
         description="查看完整多选集合的各根设计线长度，不是组总长")
+    slot_selection_json: bpy.props.StringProperty(default='', options={'HIDDEN','SKIP_SAVE'})
+    slot_targets_json: bpy.props.StringProperty(default='', options={'HIDDEN','SKIP_SAVE'})
+    slot_only: bpy.props.BoolProperty(name='仅吸附所选槽轨', default=False,
+        description='默认普通杆件与所选槽轨共同吸附；只在明确启用且有定位目标时限制到所选槽轨')
     slot_target_member_id: bpy.props.StringProperty(default='', options={'HIDDEN','SKIP_SAVE'})
     slot_target_interface_id: bpy.props.StringProperty(default='', options={'HIDDEN','SKIP_SAVE'})
     slot_target_profile_id: bpy.props.StringProperty(default='', options={'HIDDEN','SKIP_SAVE'})
@@ -211,6 +215,15 @@ def set_project(scene: bpy.types.Scene, project: Project) -> None:
         sort_keys=True,
         separators=(",", ":"),
     )
+
+
+
+def clear_slot_ui(scene):
+    """An explicit new/imported project must not inherit ephemeral old IDs."""
+    from . import slot_tools, profile_tools
+    slot_tools.clear_selection(scene)
+    profile_tools.clear_slot(scene)
+    settings(scene).endpoint_member_id = settings(scene).endpoint_side = ''
 
 
 def set_status(scene: bpy.types.Scene, message: str) -> None:

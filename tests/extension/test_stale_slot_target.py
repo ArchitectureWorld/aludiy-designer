@@ -2,6 +2,8 @@ import ast
 from pathlib import Path
 from types import SimpleNamespace
 import pytest
+import json
+from aludiy_core import slot_selection as choice_model
 from aludiy_core import Project, Node, Member, ProfileCatalog
 from aludiy_core.associations import slot_reference
 from aludiy_core.errors import ValidationError
@@ -13,8 +15,8 @@ def api():
     state=SimpleNamespace(slot_target_member_id='M-001',slot_target_interface_id='FACE_PU.S0',slot_target_profile_id='generic:tslot-2020@0.1',slot_target_catalog_revision='alpha-2026.10',inspected_member_id='M-001',inspected_profile_id='',inspected_interface_id='',endpoint_member_id='M-001',endpoint_side='END')
     messages=[]
     runtime=SimpleNamespace(settings=lambda scene:state,get_catalog=lambda:CAT,set_status=lambda scene,msg:messages.append(msg))
-    ns=dict(runtime=runtime,slot_reference=slot_reference,ValidationError=ValidationError)
-    funcs=[n for n in tree.body if isinstance(n,ast.FunctionDef) and n.name in {'clear_target','target_spec','sanitize_missing_target','snapping_target'}]
+    ns=dict(runtime=runtime,slot_reference=slot_reference,ValidationError=ValidationError,json=json,choice_model=choice_model)
+    funcs=[n for n in tree.body if isinstance(n,ast.FunctionDef) ]
     exec(compile(ast.Module(body=funcs,type_ignores=[]),'actual-slot-tools','exec'),ns)
     assert 'snapping_target' in ns and 'sanitize_missing_target' in ns,'safe slot target resolver missing'
     return state,messages,ns
