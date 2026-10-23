@@ -1,0 +1,57 @@
+name: Apply Verified Multi Slot Patch
+on:
+  push:
+    branches: ["feat/v0.1.19-multi-slot-snap"]
+    paths: [".github/workflows/apply-multislot0119.yml"]
+permissions:
+  contents: write
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Verify complete binary transport before applying
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib, lzma, pathlib
+          parts = sorted(pathlib.Path('bootstrap/multislot0119').glob('part*'))
+          assert len(parts) == 4
+          compressed = b''.join(p.read_bytes() for p in parts)
+          assert len(compressed) == 34340, len(compressed)
+          digest = hashlib.sha256(compressed).hexdigest()
+          assert digest == '303ff56552ef893fe71b3eab57aaf55cb0edc344df374943285af537c4379647', digest
+          payload = lzma.decompress(compressed)
+          assert len(payload) == 157497, len(payload)
+          pathlib.Path('/tmp/multislot0119.patch').write_bytes(payload)
+          print('COMPLETE_PATCH_VERIFIED', digest)
+          PY
+          git apply --check /tmp/multislot0119.patch
+          git apply /tmp/multislot0119.patch
+      - name: Source tests compilation and reproducible package
+        run: |
+          set -euo pipefail
+          python -m pip install pytest
+          python tools/sync_core_into_extension.py
+          pytest -q
+          python -m compileall -q src extension tools
+          python tools/build_extension.py
+          P="$(python tools/release_meta.py package-name)"
+          cp "dist/$P" "$RUNNER_TEMP/first.zip"
+          python tools/build_extension.py
+          cmp "$RUNNER_TEMP/first.zip" "dist/$P"
+      - name: Commit implementation and remove temporary transport
+        run: |
+          set -euo pipefail
+          rm -rf bootstrap/multislot0119
+          rm .github/workflows/apply-multislot0119.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add -A
+          git commit -m 'feat: v0.1.19 mixed snapping, multi-slot selection and batch relations'
+          git push origin "HEAD:${GITHUB_REF_NAME}"
+          git rev-parse HEAD >> "$GITHUB_STEP_SUMMARY"
