@@ -46,7 +46,7 @@ jobs:
   runtime:
     needs: source
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -58,19 +58,28 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Prepare verified official Blender 5.2.2 and X11
+      - name: Download and verify official Blender with bounded network waits
+        timeout-minutes: 5
         run: |
           set -euo pipefail
           mkdir -p evidence
           git rev-parse HEAD > evidence/source-sha.txt
           BASE=https://download.blender.org/release/Blender5.2
           A=blender-5.2.2-linux-x64.tar.xz
-          curl -fL --retry 3 "$BASE/$A" -o "$RUNNER_TEMP/$A"
-          curl -fL --retry 3 "$BASE/blender-5.2.2.sha256" -o "$RUNNER_TEMP/official.sha256"
+          curl -fL --connect-timeout 15 --max-time 120 --retry 2 "$BASE/$A" -o "$RUNNER_TEMP/$A"
+          curl -fL --connect-timeout 15 --max-time 45 --retry 2 "$BASE/blender-5.2.2.sha256" -o "$RUNNER_TEMP/official.sha256"
           (cd "$RUNNER_TEMP"; grep -F "$A" official.sha256 | sha256sum --check)
           tar -xf "$RUNNER_TEMP/$A" -C "$RUNNER_TEMP"
-          sudo apt-get update -qq
-          sudo apt-get install -y -qq xvfb xauth libxtst6 ffmpeg
+      - name: Prepare X11 and validate extension
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          if command -v Xvfb && command -v xauth && command -v ffmpeg && python -c "import ctypes; ctypes.CDLL('libXtst.so.6')"; then
+            echo 'Required X11 runtime already present'
+          else
+            sudo timeout 120s apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
+            sudo timeout 120s apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y -qq xvfb xauth libxtst6 ffmpeg
+          fi
           python tools/build_extension.py
           P="$(python tools/release_meta.py package-name)"
           "$RUNNER_TEMP/blender-5.2.2-linux-x64/blender" --command extension validate "dist/$P"
