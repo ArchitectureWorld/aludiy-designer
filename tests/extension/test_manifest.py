@@ -12,7 +12,7 @@ def test_manifest_targets_blender_5_2_and_declares_required_metadata() -> None:
 
     assert payload["schema_version"] == "1.0.0"
     assert payload["id"] == "aludiy_designer"
-    assert payload["version"] == "0.1.17"
+    assert payload["version"] == "0.1.18"
     assert payload["type"] == "add-on"
     assert payload["blender_version_min"] == "5.2.0"
     assert payload["license"] == ["SPDX:GPL-3.0-or-later"]

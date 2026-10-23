@@ -1,3 +1,9 @@
+## 0.1.18-alpha — engineering copy and command wheel
+- Clear deleted-host ephemeral slot targets on engineering deletion and safe snap entry; preserve valid relationships and strict catalog errors.
+- Shift+D copies the selected engineering graph with independent IDs and internal-only dependencies; cancellable G placement is one Undo.
+- MMB tap opens a scoped cursor-local action wheel; native orbit/pan and modal navigation remain intact.
+- Report omitted legacy shared-node dependencies as well as explicit relations/joints; no schema change.
+
 ## 0.1.17-alpha — blank-panel hotfix
 - Make project reads side-effect-free, including the first draw on an untouched scene. Only explicit edits/imports write project JSON.
 - Keep setup and save-copy/import recovery controls visible when project data cannot be decoded; do not clear or replace the original payload.

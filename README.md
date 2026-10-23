@@ -1,3 +1,5 @@
+> Preview 0.1.18-alpha: [工程复制、中键操作盘与删除目标清理](docs/acceptance/v0.1.18-alpha.md)。更新源不变，Windows体验待确认。
+
 # AluDIY Designer · 0.1.16-alpha Preview
 
 面向DIY家居铝型材的Blender线驱动设计工具。设计线、节点、型材目录、位置关联和实体加工规则独立管理；左右线/体视窗同步。目标验收版本为Blender5.2.2 LTS。

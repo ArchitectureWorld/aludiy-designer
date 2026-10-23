@@ -216,7 +216,7 @@ def _point_from_event(context: bpy.types.Context, event, operator):
         project_point=project_point, ray_origin_mm=ro, ray_direction=rd,
         excluded_node_ids=excluded, radius_px=settings(context.scene).snap_pixel_radius,
         axis=axis, plane_lock=plane_lock, perpendicular=start is not None,
-        catalog=get_catalog(), slot_target=slot_tools.target_spec(context.scene,project))
+        catalog=get_catalog(), slot_target=slot_tools.snapping_target(context.scene,project))
     if start is not None:
         opts = tuple(c for c in opts if math.dist(c.position_mm, start) > JOIN_TOLERANCE_MM)
     keys = tuple(c.key for c in opts)
@@ -382,10 +382,14 @@ class ALUDIY_OT_delete_selected_members(bpy.types.Operator):
             set_status(context.scene, f"工程删除失败：{exc}")
             return {"CANCELLED"}
 
+        from . import slot_tools
+        cleared_target = slot_tools.sanitize_missing_target(context.scene, project)
         message = (
             f"已删除 {len(result.removed_member_ids)} 根工程型材，"
             f"清理 {len(result.removed_node_ids)} 个孤立节点"
         )
+        if cleared_target:
+            message += '；失效槽轨目标已清除，恢复普通吸附'
         self.report({"INFO"}, message)
         set_status(context.scene, message)
         return {"FINISHED"}

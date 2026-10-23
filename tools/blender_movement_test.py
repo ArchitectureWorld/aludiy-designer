@@ -90,7 +90,10 @@ try:
         g_move.register_services(); g_move.register_services()
         km=ctx.window_manager.keyconfigs.addon
         keys=[k for m in km.keymaps for k in m.keymap_items if k.idname=='aludiy.move_engineering'] if km else []
-        if km: assert len(keys)==1,len(keys)
+        if km:
+            assert len(keys)==2,len(keys)
+            signatures={(k.type,k.value,bool(k.shift),bool(k.ctrl),bool(k.properties.duplicate)) for k in keys}
+            assert signatures=={('G','PRESS',False,False,False),('D','PRESS',True,False,True)},signatures
     print('ALUDIY_MOVE_SMOKE_OK: selection,keep,detach,preview,cancel_restore,normal_object_guard,register_idempotence')
 finally:
     addon.unregister()

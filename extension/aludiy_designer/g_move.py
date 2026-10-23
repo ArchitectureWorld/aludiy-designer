@@ -17,7 +17,7 @@ from .viewport_geometry import world_ray_mm, project_point_mm
 from .vendor.aludiy_core import Project, parse_distance_mm
 from .vendor.aludiy_core.associations import exact_snap_delta, create_associations, remove_associations
 from .vendor.aludiy_core.geometry import derive_member_mesh
-from .vendor.aludiy_core.movement import movement_node_ids, preview_move
+from .vendor.aludiy_core.movement import movement_node_ids, preview_move, duplicate_members
 from .vendor.aludiy_core.errors import ValidationError
 from .vendor.aludiy_core.snapping import node_candidates, ground_candidate, preview_reconnect, member_candidates, engineering_candidates, describe_candidate
 
@@ -257,6 +257,28 @@ class ALUDIY_OT_hover_endpoint(bpy.types.Operator):
         return {'PASS_THROUGH'}
 
 
+def _copy_member_ids(project, spec):
+    mids = tuple(spec.get('member_ids', ()))
+    # Copy physical members, never orphan engineering handles or an implicit closure.
+    if spec.get('endpoint') or not mids:
+        raise ValidationError('复制请选择完整型材；单独节点或杆端不能作为型材副本')
+    owned = {n for mid in mids if mid in project.members for n in
+             (project.members[mid].start_node_id, project.members[mid].end_node_id)}
+    if not set(spec.get('node_ids', ())).issubset(owned):
+        raise ValidationError('请取消选中独立节点，只复制所选完整型材')
+    return mids
+
+
+def _select_copies(context, mapping, snapshot):
+    from . import selection_state
+    active = snapshot[1] if snapshot else None
+    old_id = active[1] if active and active[0]=='ENGINEERING' else None
+    new_id = mapping.get(old_id, next(iter(mapping.values())))
+    kind = active[2] if active and active[0]=='ENGINEERING' else 'MEMBER_AXIS'
+    selection_state.restore(context, ([('ENGINEERING',m,'MEMBER_AXIS') for m in mapping.values()],
+                                    ('ENGINEERING',new_id,kind)))
+
+
 class ALUDIY_OT_move_engineering(bpy.types.Operator):
     bl_idname = 'aludiy.move_engineering'
     bl_label = 'G 移动工程对象'
@@ -269,6 +291,7 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
     snap_target_node_id: StringProperty(default='', options={'HIDDEN'})
     snap_anchor_node_id: StringProperty(default='', options={'HIDDEN'})
     connect_only: BoolProperty(name='点选连接目标', default=False, options={'HIDDEN','SKIP_SAVE'})
+    duplicate: BoolProperty(name='工程复制', default=False, options={'HIDDEN','SKIP_SAVE'})
 
     @classmethod
     def poll(cls, context):
@@ -279,19 +302,25 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
         try:
             original = runtime.get_project(context.scene)
             spec = json.loads(self.target_json) if self.target_json else target_spec(context)
+            source = original
+            copies = None
+            if self.duplicate:
+                copies = duplicate_members(original, _copy_member_ids(original, spec))
+                source = copies.project
+                spec = {'member_ids': list(copies.member_map.values())}
             delta = tuple(json.loads(self.delta_json)) if self.delta_json else tuple(self.delta_mm)
             if self.snap_target_node_id:
                 anchor = self.snap_anchor_node_id or movement_node_ids(original, **spec)[0]
                 result = preview_reconnect(original, delta, detach=self.detach,
                     anchor_node_id=anchor, target_node_id=self.snap_target_node_id, **spec)
             else:
-                result = preview_move(original,delta,detach=self.detach,**spec)
-            if not result.moved_node_ids:
+                result = preview_move(source,delta,detach=self.detach,**spec)
+            if not result.moved_node_ids and not self.duplicate:
                 runtime.settings(context.scene).move_connection_mode='KEEP'
                 runtime.set_status(context.scene,'位置与连接未改变')
                 return {'CANCELLED'}
             from .operators import _commit_project_update
-            selected_id = (result.detached_node_id or (result.moved_node_ids[0] if spec.get('endpoint') or spec.get('node_ids')
+            selected_id = (spec['member_ids'][0] if self.duplicate else result.detached_node_id or (result.moved_node_ids[0] if spec.get('endpoint') or spec.get('node_ids')
                             else spec['member_ids'][0]))
             _commit_project_update(context,original,result.project,selected_entity_id=selected_id)
             # Preserve multiselection after reconstruction; useful for consecutive moves.
@@ -306,7 +335,10 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
                     if o.get('aludiy_managed'):
                         o.select_set(runtime.entity_id_from_object(o) in wanted)
             runtime.settings(context.scene).move_connection_mode = 'KEEP'
-            message = (f'已连接到 {self.snap_target_node_id}' if self.snap_target_node_id else
+            if self.duplicate:
+                _select_copies(context, copies.member_map, getattr(self, '_copy_selection', None))
+            message = ((f'已复制 {len(copies.member_map)} 根；未继承 {copies.dropped_external_count} 处选区外依赖')
+                       if copies else f'已连接到 {self.snap_target_node_id}' if self.snap_target_node_id else
                        ('已断开杆端并移动' if self.detach else '保持连接移动'))
             runtime.set_status(context.scene, f'{message} · 更新 {len(result.affected_member_ids)} 根 · Ctrl+Z 撤销')
             return {'FINISHED'}
@@ -317,12 +349,29 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
 
     def invoke(self, context, event):
         global _ACTIVE
+        from . import operators, slot_tools, selection_state
+        if operators._ACTIVE_DRAW is not None:
+            return {'PASS_THROUGH'}
+        if self.duplicate and context.workspace.name != runtime.WORKSPACE_NAME:
+            return {'PASS_THROUGH'}
+        self._copy_base = None
+        self._copy_selection = None
         try:
             self._scene, self._area = context.scene, context.area
             self._region = _window_region(context.area)
             self._spec = target_spec(context)
             self._original = runtime.get_project(context.scene)
             self._raw = runtime.settings(context.scene).project_json
+            slot_tools.sanitize_missing_target(context.scene, self._original)
+            source_spec = dict(self._spec)
+            if self.duplicate:
+                copies = duplicate_members(self._original, _copy_member_ids(self._original, self._spec))
+                self._copy_base = self._original
+                self._copy_selection = selection_state.capture(context)
+                self._original = copies.project
+                self._spec = {'member_ids': list(copies.member_map.values())}
+                self._copy_map = copies.member_map
+                self._copy_dropped = copies.dropped_external_count
             ids = movement_node_ids(self._original,**self._spec)
             self._target_ids = set(ids)
             # For whole/group moves use the selected endpoint closest to the
@@ -366,15 +415,22 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
             self._needs_rebase = False
             self._screen_normal = context.area.spaces.active.region_3d.view_rotation @ Vector((0,0,1))
             self.detach = bool(self._spec.get('endpoint') and runtime.settings(context.scene).move_connection_mode=='DETACH')
-            self.target_json = json.dumps(self._spec)
+            self.target_json = json.dumps(source_spec)
             self._rebase_pointer(context)
             _ACTIVE = self
+            if self.duplicate:
+                self._candidate = preview_move(self._original, (0,0,0), **self._spec)
+                scene_adapter.rebuild_scene(self._scene, self._original, runtime.get_catalog())
+                _select_copies(context, self._copy_map, self._copy_selection)
             context.window_manager.modal_handler_add(self)
             context.window.cursor_modal_set('CROSSHAIR')
             self._feedback(context)
             return {'RUNNING_MODAL'}
         except Exception as exc:
             _ACTIVE = None
+            if self._copy_base is not None:
+                scene_adapter.rebuild_scene(self._scene, self._copy_base, runtime.get_catalog())
+                selection_state.restore(context, self._copy_selection)
             self.report({'WARNING'},str(exc))
             return {'CANCELLED'}
 
@@ -441,7 +497,7 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
             axis=self._axis, plane_lock=self._plane_lock, exact_position_mm=exact,
             ground_mm=self._ground, raw_position_mm=tuple(origin[i]+delta[i] for i in range(3)),
             nodes_only=self.connect_only, catalog=runtime.get_catalog(),
-            slot_target=slot_tools.target_spec(self._scene,self._original))
+            slot_target=slot_tools.snapping_target(self._scene,self._original))
         keys = tuple(c.key for c in options)
         if keys != self._choice_keys:
             self._snap_choice = 0
@@ -500,7 +556,7 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
         self._feedback(context)
 
     def _feedback(self, context):
-        mode='断开选中杆端' if self.detach else '保持连接'
+        mode='复制摆放' if self.duplicate else ('断开选中杆端' if self.detach else '保持连接')
         axis=('排除 '+self._axis if self._plane_lock else self._axis) if self._axis else '屏幕平面'
         message=f'G · {mode} · {axis} · 源 {self._anchor_id} | {self._snap_label()} | Δ {self._delta.x:.1f}, {self._delta.y:.1f}, {self._delta.z:.1f} mm | Enter 确认 · Esc 取消'
         if self._error: message='不可提交：'+self._error
@@ -583,7 +639,12 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
     def _restore_and_close(self, context):
         global _ACTIVE
         try:
-            update_preview_geometry(self._scene,self._original,self._affected)
+            if self.duplicate and self._copy_base is not None:
+                from . import selection_state
+                scene_adapter.rebuild_scene(self._scene, self._copy_base, runtime.get_catalog())
+                selection_state.restore(context, self._copy_selection)
+            else:
+                update_preview_geometry(self._scene,self._original,self._affected)
         finally:
             self._closed=True; _ACTIVE=None
             self._area.header_text_set(None)
@@ -594,7 +655,7 @@ class ALUDIY_OT_move_engineering(bpy.types.Operator):
         if not getattr(self,'_closed',True):
             self._restore_and_close(context)
             runtime.settings(self._scene).move_connection_mode='KEEP'
-            runtime.set_status(self._scene,'移动已取消，位置与连接关系均未改变')
+            runtime.set_status(self._scene,'复制已取消，未留下副本' if self.duplicate else '移动已取消，位置与连接关系均未改变')
 
 
 def _disc(point, radius, color):
@@ -638,14 +699,14 @@ def _draw_handles():
                 ov._text(point.x+16,point.y+16,label,size=14)
         if _ACTIVE is not None and _ACTIVE._scene==ctx.scene:
             op=_ACTIVE
-            mode='解除杆端关联' if op.detach else '吸附仅定位'
+            mode='复制摆放' if op.duplicate else ('解除杆端关联' if op.detach else '吸附仅定位')
             axis=(('排除 ' if op._plane_lock else '')+op._axis) if op._axis else '屏幕平面'
             from . import view_sync
             if ctx.area == op._area or view_sync.is_line_view_context(ctx):
                 x=72 if ctx.space_data.show_region_toolbar else 14
                 top=ctx.region.height-58
                 ov._filled_rect(x,top-112,min(590,ctx.region.width-x-14),112,(.035,.045,.065,.94))
-                ov._text(x+12,top-24,f'G 移动 · {mode} · {axis} · 源 {op._anchor_id}',size=14)
+                ov._text(x+12,top-24,f'{"Shift+D" if op.duplicate else "G"} · {mode} · {axis} · 源 {op._anchor_id}',size=14)
                 ov._text(x+12,top-49,f'ΔX {op._delta.x:.1f}   ΔY {op._delta.y:.1f}   ΔZ {op._delta.z:.1f} mm',size=13)
                 ov._text(x+12,top-74,op._error or (f'输入：{op._typed}' if op._typed else 'X/Y/Z 锁轴 · 左键/Enter 确认 · Esc 取消'),size=12,
                          color=(1,.45,.25,1) if op._error else ov.TEXT_COLOR)
@@ -749,7 +810,7 @@ class ALUDIY_OT_create_associations(bpy.types.Operator):
             from . import slot_tools
             from .vendor.aludiy_core.associations import create_slot_associations
             original=runtime.get_project(context.scene)
-            target=slot_tools.target_spec(context.scene,original)
+            target=slot_tools.snapping_target(context.scene,original)
             if target:
                 result=create_slot_associations(original,runtime.get_catalog(),
                     host_member_id=target[0],interface_id=target[1],**spec)
@@ -808,6 +869,9 @@ def register_services():
         move_key=km.keymap_items.new('aludiy.move_engineering',type='G',value='PRESS',head=True)
         move_key.properties.connect_only=False
         _KEYMAPS.append((km,move_key))
+        copy_key=km.keymap_items.new('aludiy.move_engineering',type='D',value='PRESS',shift=True,head=True)
+        copy_key.properties.duplicate=True
+        _KEYMAPS.append((km,copy_key))
         km=wm.keyconfigs.addon.keymaps.new(name='3D View',space_type='VIEW_3D')
         _KEYMAPS.append((km,km.keymap_items.new('aludiy.pick_endpoint',type='LEFTMOUSE',value='PRESS',any=True,head=True)))
         km=wm.keyconfigs.addon.keymaps.new(name='Window',space_type='EMPTY')

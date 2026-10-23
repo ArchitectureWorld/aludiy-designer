@@ -149,6 +149,8 @@ class ALUDIY_PT_main(bpy.types.Panel):
         op.endpoint = "END"
         move = box.operator("aludiy.move_engineering", text="G · 鼠标移动", icon="EMPTY_ARROWS")
         move.connect_only = False
+        copy = box.operator("aludiy.move_engineering", text="Shift+D · 工程复制", icon="DUPLICATE")
+        copy.duplicate = True
         box.operator("aludiy.translate_active_member", text="整根精确平移 ΔXYZ")
         mids,nids=g_move.selection_summary(context)
         box.label(text=f"已选 {len(mids)} 根型材 / {len(nids)} 个节点")
