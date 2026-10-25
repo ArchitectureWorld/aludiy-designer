@@ -1,0 +1,133 @@
+name: Junction Editor Phase One Runtime Verification
+on:
+  push:
+    branches: ["feat/v0.1.20-joint-editor"]
+    paths: [".github/workflows/joint-editor-runtime.yml", "src/**", "extension/**", "tools/**", "tests/**"]
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: joint-editor-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Python regressions compilation and reproducible package
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          python -m pip install pytest
+          python tools/sync_core_into_extension.py
+          pytest -q | tee evidence/pytest.log
+          python -m compileall -q src extension tools
+          python tools/build_extension.py
+          P="$(python tools/release_meta.py package-name)"
+          cp "dist/$P" "$RUNNER_TEMP/first.zip"
+          python tools/build_extension.py
+          cmp "$RUNNER_TEMP/first.zip" "dist/$P"
+          cp "dist/$P" evidence/
+          git rev-parse HEAD > evidence/source-sha.txt
+          git archive HEAD | xz > evidence/source.tar.xz
+          sha256sum "dist/$P" > evidence/package-sha256.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aludiy-joint-editor-source
+          path: evidence/
+          retention-days: 30
+  runtime:
+    needs: source
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        suite: [editor, multi, copy, panel, retained]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Download and verify official Blender with bounded network waits
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          mkdir -p evidence
+          git rev-parse HEAD > evidence/source-sha.txt
+          BASE=https://download.blender.org/release/Blender5.2
+          A=blender-5.2.2-linux-x64.tar.xz
+          curl -fL --connect-timeout 15 --max-time 120 --retry 2 "$BASE/$A" -o "$RUNNER_TEMP/$A"
+          curl -fL --connect-timeout 15 --max-time 45 --retry 2 "$BASE/blender-5.2.2.sha256" -o "$RUNNER_TEMP/official.sha256"
+          (cd "$RUNNER_TEMP"; grep -F "$A" official.sha256 | sha256sum --check)
+          tar -xf "$RUNNER_TEMP/$A" -C "$RUNNER_TEMP"
+      - name: Prepare X11 and validate extension
+        timeout-minutes: 5
+        run: |
+          set -euo pipefail
+          if command -v Xvfb && command -v xauth && command -v ffmpeg && python -c "import ctypes; ctypes.CDLL('libXtst.so.6')"; then
+            echo 'Required X11 runtime already present'
+          else
+            sudo timeout 120s apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update -qq
+            sudo timeout 120s apt-get -o Acquire::Retries=2 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y -qq xvfb xauth libxtst6 ffmpeg
+          fi
+          python tools/build_extension.py
+          P="$(python tools/release_meta.py package-name)"
+          "$RUNNER_TEMP/blender-5.2.2-linux-x64/blender" --command extension validate "dist/$P"
+          cp "dist/$P" evidence/
+      - name: Real Blender suite and fresh-process reopen checks
+        env:
+          SUITE: ${{ matrix.suite }}
+        run: |
+          set -euo pipefail
+          B="$RUNNER_TEMP/blender-5.2.2-linux-x64/blender"
+          case "$SUITE" in
+            editor) SCRIPT=tools/verify_joint_editor.sh ;;
+            multi) SCRIPT=tools/verify_multi_slot.sh ;;
+            copy) SCRIPT=tools/verify_copy_wheel.sh ;;
+            panel) SCRIPT=tools/verify_panel_startup.sh ;;
+            retained) SCRIPT=tools/verify_console_joints.sh ;;
+            *) exit 1 ;;
+          esac
+          bash "$SCRIPT" "$B" "$GITHUB_WORKSPACE/evidence/runtime" | tee evidence/runtime-summary.log
+      - name: Generate raw and processed full desk acceptance models
+        if: matrix.suite == 'editor'
+        env:
+          ALUDIY_DEMO_DIR: ${{ github.workspace }}/evidence/demos
+          BLENDER_USER_CONFIG: ${{ github.workspace }}/evidence/demo-config
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          set -euo pipefail
+          B="$RUNNER_TEMP/blender-5.2.2-linux-x64/blender"
+          "$B" -b evidence/runtime/editor-1/joint-editor.blend -t 2 --python-exit-code 1 --python tools/create_joint_editor_demo.py | tee evidence/demo-summary.log
+      - name: Check out immutable 0.1.19 upgrade baseline
+        if: matrix.suite == 'editor'
+        uses: actions/checkout@v4
+        with:
+          ref: "972742cf3ae603baa33ac4c312e3c40b53a8b9ca"
+          path: .upgrade-baseline
+          persist-credentials: false
+      - name: Install over 0.1.19 without manual uninstall and preserve saved project
+        if: matrix.suite == 'editor'
+        run: |
+          set -euo pipefail
+          B="$RUNNER_TEMP/blender-5.2.2-linux-x64/blender"
+          P="$(python tools/release_meta.py package-name)"
+          test "$(git -C .upgrade-baseline rev-parse HEAD)" = 972742cf3ae603baa33ac4c312e3c40b53a8b9ca
+          python .upgrade-baseline/tools/build_extension.py
+          python tools/verify_joint_editor_upgrade.py "$B" "$GITHUB_WORKSPACE/.upgrade-baseline/dist/aludiy_designer-0.1.19.zip" "dist/$P" "$GITHUB_WORKSPACE/evidence/upgrade" | tee evidence/upgrade-summary.log
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: aludiy-joint-editor-${{ matrix.suite }}-evidence
+          path: evidence/
+          retention-days: 30
