@@ -72,7 +72,10 @@ class ALUDIY_OT_remove_joints(bpy.types.Operator):
 
 def draw_panel(layout, context):
     p = g_move.display_project(context.scene)
-    box = layout.box(); box.label(text='交接与端面退让 · 首版', icon='MOD_LENGTH')
+    box = layout.box(); box.label(text='交接方案与端面处理', icon='MOD_LENGTH')
+    row = box.row(); row.operator_context = 'INVOKE_DEFAULT'
+    row.operator('aludiy.edit_joint_options', text='预览 / 切换 L·T·三向方案', icon='VIEWZOOM')
+    box.label(text='选2或3根完整型材；确认前不改变工程')
     box.label(text='直角端面对接 · 设计线不移动')
     try:
         host, branch = selected_pair(context)

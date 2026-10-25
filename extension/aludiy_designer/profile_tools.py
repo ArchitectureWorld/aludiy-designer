@@ -167,6 +167,9 @@ def draw_panel(layout, context):
 
 def inspector_layout(context, project=None):
     """Return the exact visible geometry, or None (also no hit area)."""
+    from . import joint_editor
+    if joint_editor.is_previewing(context):
+        return None
     c = context
     if not (c.area and c.area.type == 'VIEW_3D' and c.region
             and c.region.type == 'WINDOW' and c.workspace

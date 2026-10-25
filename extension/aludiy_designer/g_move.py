@@ -793,7 +793,8 @@ def _draw_selection(context,ov):
         pt=ov._project(p.nodes[nid].position_mm)
         if pt is not None:
             ov.draw_snap_marker((pt.x,pt.y),color=(1,.8,.25,1))
-    if mids or nids:
+    from . import joint_editor
+    if (mids or nids) and not joint_editor.is_previewing(context):
         y=35;x=72 if context.space_data.show_region_toolbar else 14
         ov._filled_rect(x,y, min(580,context.region.width-x-12),48,(.035,.045,.065,.94))
         ov._text(x+10,y+29,f'已选 {len(mids)} 根型材 / {len(nids)} 个节点 · 当前 {active or "—"}',size=13)

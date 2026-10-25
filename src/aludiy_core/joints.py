@@ -163,6 +163,8 @@ def solve_cutbacks(project, catalog, *, strict=False):
         cut = length-offsets.get((mid, 'START'), 0)-offsets.get((mid, 'END'), 0)
         if cut <= TOL:
             issues.append(f'{mid} 退让后的实体长度不足；请减小间隙或增加设计长度')
+    if not issues:
+        issues.extend(_processing_collisions(project, catalog, offsets))
     if issues and strict:
         raise ValidationError('交接待处理，禁止导出加工参考长度：'+'；'.join(issues))
     lengths = {mid: BodyLength(length, None) for mid, length in base.items()} if issues else {
@@ -229,3 +231,65 @@ def remove_joints(project, *, member_ids=()):
         q.members[mid].revision += 1
     q.validate()
     return JointChange(q, len(removed))
+
+
+def _body_box(project, catalog, mid, offsets):
+    """Oriented rectangular body envelope, independent of derived mesh/solver."""
+    e = derive_member_envelope(project, mid, catalog)
+    start = offsets.get((mid, 'START'), 0.0)
+    end = offsets.get((mid, 'END'), 0.0)
+    center = tuple(e.start_mm[i] + e.axis_direction[i] * (e.length_mm+start-end)/2
+                   for i in range(3))
+    return (center, (e.u_axis, e.v_axis, e.axis_direction),
+            (e.section_width_mm/2, e.section_height_mm/2, (e.length_mm-start-end)/2))
+
+
+def _boxes_overlap(a, b):
+    """Separating axes test; contact within TOL is not volume penetration.
+
+    Conservative solid rectangular envelopes, not void-aware supplier geometry.
+    Cross-product axes are needed when section frames differ.
+    """
+    ca, aa, ha = a; cb, ab, hb = b
+    axes = list(aa) + list(ab)
+    for u in aa:
+        for v in ab:
+            cross = (u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0])
+            length = math.sqrt(_dot(cross, cross))
+            if length > 1e-10:
+                axes.append(tuple(x/length for x in cross))
+    delta = _sub(cb, ca)
+    for axis in axes:
+        ra = sum(h*abs(_dot(axis, u)) for h, u in zip(ha, aa))
+        rb = sum(h*abs(_dot(axis, u)) for h, u in zip(hb, ab))
+        if abs(_dot(delta, axis)) >= ra + rb - TOL:
+            return False
+    return True
+
+
+def _processing_collisions(project, catalog, offsets):
+    """Check explicitly processed local junctions, not transitive whole frames.
+
+    A desk can be processed corner by corner. Unprocessed far-end crossings
+    must not prevent configuring the current corner; this is not global clash
+    detection. Direct contacts, same-host branches, and coincident contact
+    stations form the local pairs checked here.
+    """
+    pairs, branches, contacts = set(), {}, []
+    for j in project.joints.values():
+        pairs.add(tuple(sorted((j.host_member_id, j.branch_member_id))))
+        branches.setdefault(j.host_member_id, set()).add(j.branch_member_id)
+        m = project.members[j.branch_member_id]
+        nid = m.start_node_id if j.branch_end == 'START' else m.end_node_id
+        contacts.append((project.nodes[nid].position_mm, {j.host_member_id, j.branch_member_id}))
+    for children in branches.values():
+        mids = sorted(children)
+        pairs.update((a, b) for i, a in enumerate(mids) for b in mids[i+1:])
+    for i, (point, members) in enumerate(contacts):
+        for other, more in contacts[i+1:]:
+            if math.dist(point, other) <= TOL:
+                mids = sorted(members | more)
+                pairs.update((a, b) for k, a in enumerate(mids) for b in mids[k+1:])
+    boxes = {mid: _body_box(project, catalog, mid, offsets) for pair in pairs for mid in pair}
+    return [f'{a} 与 {b} 的交接实体外廓相交；请换贯通方案或调整规格'
+            for a, b in sorted(pairs) if _boxes_overlap(boxes[a], boxes[b])]

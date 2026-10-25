@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import bpy
 
-from . import operators, g_move, panels, runtime, view_sync, profile_tools, slot_tools, joint_tools, action_wheel
+from . import operators, g_move, panels, runtime, view_sync, profile_tools, slot_tools, joint_tools, action_wheel, joint_editor
 from .vendor.aludiy_core.startup import try_optional_service
 
 bl_info = {
     "name": "AluDIY Designer",
     "author": "ArchitectureWorld",
-    "version": (0, 1, 18),
+    "version": (0, 1, 20),
     "blender": (5, 2, 0),
     "location": "View3D > Sidebar > AluDIY",
     "description": "Line-driven aluminum extrusion design with linked 3D feedback",
@@ -25,6 +25,7 @@ CLASSES = (
     *profile_tools.CLASSES,
     *slot_tools.CLASSES,
     *joint_tools.CLASSES,
+    *joint_editor.CLASSES,
     *action_wheel.CLASSES,
 )
 
@@ -68,6 +69,7 @@ def _register_optional_services() -> None:
         ("截面与槽位检查", profile_tools.register_services),
         ("槽轨定位目标", slot_tools.register_services),
         ("中键模型操作盘", action_wheel.register_services),
+        ("交接方案预览", joint_editor.register_services),
     ):
         error = try_optional_service(name, callback)
         if error is not None:
@@ -100,6 +102,7 @@ def register() -> None:
 
 
 def unregister() -> None:
+    joint_editor.unregister_services()
     action_wheel.unregister_services()
     slot_tools.unregister_services()
     profile_tools.unregister_services()
