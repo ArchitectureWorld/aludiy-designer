@@ -1,3 +1,9 @@
+## 0.1.20-alpha — visual junction editor, phase one
+- Preview and choose L/T or concurrent orthogonal three-way recipes without mutating design axes, nodes or positional associations.
+- Explicit host choices, gap input, actual local envelope projections, before/after body lengths and boundary changes; atomic confirm and native Undo/Redo.
+- Reject local processing penetrations; allow progressive full-frame corner configuration and preserve other endpoint rules.
+- Keep existing schema; no connector, manufacturing, global clash or strength certification. Add roadmap and native UI/upgrade regressions.
+
 ## 0.1.19-alpha — mixed snapping and multi-rail operations
 - Merge ordinary snap families with explicitly activated rails by default; rail-only is an explicit opt-in.
 - Shift-toggle a revision-bound rail collection across members; selected and activated sets remain distinct.

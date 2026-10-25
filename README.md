@@ -1,3 +1,5 @@
+> Preview 0.1.20-alpha: [交接方案第一阶段](docs/acceptance/v0.1.20-alpha.md) · [交接系统整体计划](docs/junction-roadmap-v1.0.md)。原更新源不变。
+
 > Preview 0.1.19-alpha: [混合吸附、多选槽轨与批量关联](docs/acceptance/v0.1.19-alpha.md)。原更新源不变；Windows体验待确认。
 
 > Preview 0.1.18-alpha: [工程复制、中键操作盘与删除目标清理](docs/acceptance/v0.1.18-alpha.md)。更新源不变，Windows体验待确认。
